@@ -100,14 +100,12 @@ export async function fireOrderCore(supabaseAdmin: any, orderId: string, max: nu
     const expired = new Set<string>();
 
     await fireInChunks(plan, async (job) => {
-      const picked = pickComment();
-      if (picked.id) commentUsage.set(picked.id, (commentUsage.get(picked.id) ?? 0) + 1);
       const res = await fireOnce(job.template, {
         REVIEW_ID: order.review_id!,
         FEATURE_ID: order.feature_id ?? "0x0:0x0",
         REASON: reasonNum,
         REASON_NAME: String(order.reason_code),
-        COMMENT: picked.text,
+        COMMENT: "",
       });
       // Only Google-side auth rejection marks a template expired. Relay/proxy
       // faults (407, timeouts, relay 401) used to flip good sessions dead,

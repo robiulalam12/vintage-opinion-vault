@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DMCA Autofill</title>
+    <style>
+      body {
+        margin: 0;
+        width: 336px;
+        font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #0f172a;
+        background: #fff;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px;
+        border-bottom: 1px solid #e6e9f0;
+      }
+      .mark {
+        display: grid;
+        place-items: center;
+        width: 24px;
+        height: 24px;
+        border-radius: 8px;
+        background: #1d4ed8;
+        color: #fff;
+        font-weight: 700;
+        font-size: 13px;
+      }
+      main {
+        padding: 12px 14px 14px;
+      }
+      label {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #7a8699;
+        margin: 10px 0 4px;
+      }
+      select,
+      input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 7px 9px;
+        border: 1px solid #d7dce5;
+        border-radius: 9px;
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+        width: 100%;
+        padding: 9px;
+        margin-top: 8px;
+        border: 0;
+        border-radius: 10px;
+        background: #1d4ed8;
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+      }
+      button.ghost {
+        background: #fff;
+        color: #0f172a;
+        border: 1px solid #d7dce5;
+      }
+      button.danger {
+        background: #fff;
+        color: #b3261e;
+        border: 1px solid #f0d3d0;
+      }
+      button[disabled] {
+        opacity: 0.55;
+        cursor: default;
+      }
+      .status {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #516079;
+        min-height: 18px;
+        white-space: pre-wrap;
+      }
+      .status.err {
+        color: #b3261e;
+      }
+      .status.ok {
+        color: #1a7f4f;
+      }
+      .batch {
+        margin-top: 12px;
+        padding: 10px;
+        border: 1px solid #d7dce5;
+        border-radius: 10px;
+        background: #f7f9fc;
+        font-size: 12px;
+      }
+      a {
+        color: #1d4ed8;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="mark">P</span>
+      <strong style="font-size: 12px; letter-spacing: 0.04em; text-transform: uppercase"
+        >DMCA autofill</strong
+      >
+    </header>
+    <main>
+      <button class="ghost" id="open">Open Google legal form</button>
+
+      <label for="order">Order batch</label>
+      <select id="order"><option value="">Loading…</option></select>
+      <button class="ghost" id="retry" hidden>Retry loading orders</button>
+      <button class="ghost" id="settings" hidden>Open Settings</button>
+
+      <label for="size">URLs per notice (1–100)</label>
+      <input id="size" type="number" min="1" max="100" value="90" />
+
+      <button id="reserve">Reserve URLs</button>
+
+      <div class="batch" id="batch" hidden></div>
+      <button id="fill" hidden>Fill this form</button>
+      <input id="caseRef" placeholder="Google case ID (optional)" style="margin-top: 8px" hidden />
+      <button class="ghost" id="confirm" hidden>Mark submitted</button>
+      <button class="danger" id="release" hidden>Release reserved batch</button>
+
+      <div
+        style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #e6e9f0"
+      >
+        <strong style="font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #7a8699"
+          >One-by-one reporting</strong
+        >
+        <p style="margin: 6px 0 0; font-size: 11px; color: #7a8699">
+          Full evidence per review: its own Google link, your published link and its DMCA text.
+          The run keeps going through every review in the order — no 90-link cap — until you press
+          Stop run.
+        </p>
+        <div class="batch" id="runState" hidden></div>
+        <button id="startRun">Start 1-by-1 run</button>
+        <button class="danger" id="stopRun" hidden>Stop run</button>
+        <button class="ghost" id="openRun" hidden>Open the run tab</button>
+      </div>
+
+      <div
+        style="margin-top: 14px; padding-top: 12px; border-top: 1px solid #e6e9f0"
+      >
+        <strong style="font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #7a8699"
+          >Profile report — collect reviewer URLs</strong
+        >
+        <p style="margin: 6px 0 0; font-size: 11px; color: #7a8699">
+          Opens each review in your signed-in Maps session and saves the reviewer profile URL back
+          into the batch.
+        </p>
+        <label for="profileOrder">Profile batch</label>
+        <select id="profileOrder"><option value="">Loading…</option></select>
+        <div class="batch" id="captureState" hidden></div>
+        <button id="startCapture">Start profile capture</button>
+        <button class="danger" id="stopCapture" hidden>Stop capture</button>
+      </div>
+
+      <div class="status" id="status"></div>
+
+      <p style="margin: 12px 0 0; font-size: 11px; color: #7a8699">
+        <a href="options.html" target="_blank">Settings</a> · batch mode needs your click; 1-by-1 auto-submits with 2Captcha.
+      </p>
+    </main>
+    <script src="config.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

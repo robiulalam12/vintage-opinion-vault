@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>DMCA Autofill — Settings</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 28px;
+        font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+        color: #0f172a;
+        background: #f7f9fc;
+      }
+      .card {
+        max-width: 560px;
+        margin: 0 auto;
+        background: #fff;
+        border: 1px solid #e6e9f0;
+        border-radius: 16px;
+        padding: 22px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+      p.sub {
+        margin: 0 0 18px;
+        color: #7a8699;
+        font-size: 13px;
+      }
+      label {
+        display: block;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #7a8699;
+        margin: 14px 0 4px;
+      }
+      input {
+        box-sizing: border-box;
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid #d7dce5;
+        border-radius: 10px;
+        font: inherit;
+      }
+      .row {
+        display: flex;
+        gap: 12px;
+      }
+      .row > div {
+        flex: 1;
+      }
+      .check {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 16px;
+        font-size: 13px;
+      }
+      .check input {
+        width: auto;
+      }
+      button {
+        margin-top: 18px;
+        padding: 10px 18px;
+        border: 0;
+        border-radius: 10px;
+        background: #1d4ed8;
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      .status {
+        margin-top: 10px;
+        font-size: 13px;
+        color: #1a7f4f;
+        min-height: 18px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>DMCA Autofill settings</h1>
+      <p class="sub">
+        These details fill Google's copyright removal form. Nothing is submitted automatically.
+      </p>
+
+      <label for="apiBase">Dashboard URL</label>
+      <input id="apiBase" placeholder="https://peopleopinionbox.com" />
+
+      <label for="apiKey">Extension API key</label>
+      <input id="apiKey" type="password" placeholder="Paste from Dashboard → DMCA" />
+
+      <div class="row">
+        <div>
+          <label for="country">Country of residence</label>
+          <input id="country" />
+        </div>
+        <div>
+          <label for="email">Contact email</label>
+          <input id="email" type="email" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="fullName">Full legal name</label>
+          <input id="fullName" />
+        </div>
+        <div>
+          <label for="copyrightHolder">Copyright holder</label>
+          <input id="copyrightHolder" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="company">Company name</label>
+          <input id="company" />
+        </div>
+        <div>
+          <label for="signature">Signature</label>
+          <input id="signature" />
+        </div>
+      </div>
+
+      <div class="row">
+        <div>
+          <label for="batchSize">Default URLs per notice</label>
+          <input id="batchSize" type="number" min="1" max="100" />
+        </div>
+        <div>
+          <label for="autoSubmitDelay">Auto-submit countdown (seconds)</label>
+          <input id="autoSubmitDelay" type="number" min="3" max="60" />
+        </div>
+      </div>
+
+      <label for="twoCaptchaKey">2Captcha API key (used by 1-by-1 mode)</label>
+      <input id="twoCaptchaKey" type="password" placeholder="Leave empty to solve captchas yourself" autocomplete="off" />
+
+      <div class="check">
+        <input id="tickFeedback" type="checkbox" />
+        <label for="tickFeedback" style="margin: 0; text-transform: none; letter-spacing: 0"
+          >Also tick Google's optional feedback checkbox</label
+        >
+      </div>
+
+      <button id="save">Save settings</button>
+      <div class="status" id="status"></div>
+    </div>
+    <script src="config.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

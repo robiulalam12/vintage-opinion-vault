@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "People Opinion Box — Session",
+  "version": "3.2.0",
+  "description": "One-click capture of every Google account signed into this Chrome profile, straight into the POB dashboard.",
+  "permissions": ["storage", "cookies", "alarms"],
+  "host_permissions": [
+    "https://*.google.com/*",
+    "https://peopleopinionbox.com/*",
+    "https://www.peopleopinionbox.com/*",
+    "https://*.lovable.app/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://*.google.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup.html", "default_icon": { "48": "icon.png", "128": "icon.png" } },
+  "icons": { "48": "icon.png", "128": "icon.png" }
+}

@@ -1,0 +1,2 @@
+ALTER TABLE public.review_orders DROP CONSTRAINT IF EXISTS review_orders_reviewer_key_check;
+ALTER TABLE public.review_orders ADD CONSTRAINT review_orders_reviewer_key_check CHECK (reviewer_key IN ('robiul','jonas','benedikt'));

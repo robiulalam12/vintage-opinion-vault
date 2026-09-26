@@ -85,7 +85,44 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
           return json({ error: "Invalid payload", detail: (err as Error).message }, 400);
         }
 
-        const authuser = parsed.auth_user_index ?? 0;
+         const authuser = parsed.auth_user_index ?? 0;
+
+        // Reject obviously-wrong bundles immediately (cheap).
+        const cookieCheck = cookieBundleHasAuth(parsed.cookie_bundle);
+        if (!cookieCheck.ok) {
+          return json({ error: cookieCheck.reason }, 400);
+        }
+
+        // Prove the cookies actually authenticate for THIS authuser slot
+        // before we persist. Without this, a dead bundle is stored as
+        // status="fresh" and only fails days later at fire time.
+        const probeId = randomUUID();
+        const probe = await probeAccountSignIn({
+          id: probeId,
+          cookie_bundle: parsed.cookie_bundle,
+          headers_json: buildHeaders(parsed.user_agent, authuser),
+          auth_user_index: authuser,
+        });
+
+        if (!probe.signedIn && probe.conclusive) {
+          return json(
+            {
+              error:
+                `Google rejected this session for authuser=${authuser}: ${probe.reason}. ` +
+                `Re-export cookies from the currently-signed-in account, and make sure the authuser index matches (0 = primary, 1/2/… = extras).`,
+            },
+            422,
+          );
+        }
+
+        // Inconclusive probes (relay/proxy down, Google HTML shape change)
+        // still get stored — but as "stale" so they don't enter orders as
+        // if they were verified.
+        const initialStatus = probe.signedIn ? "fresh" : "stale";
+        const probeNote = probe.signedIn
+          ? `verified sign-in at upload (authuser=${authuser})`
+          : `unverified at upload — probe inconclusive: ${probe.reason ?? "unknown"}`;
+
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
         const { data, error } = await supabaseAdmin
           .from("fake_review_templates")
@@ -99,15 +136,18 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
             cookie_bundle: parsed.cookie_bundle,
             body_template: buildBodyTemplate(parsed.at_token),
             body_kind: "form",
-            status: "fresh",
+            status: initialStatus,
+            last_verified_at: probe.signedIn ? new Date().toISOString() : null,
             notes:
-              (parsed.notes ? parsed.notes + " — " : "") + `session-only capture at=${parsed.at_token.slice(0, 6)}…`,
+              (parsed.notes ? parsed.notes + " — " : "") +
+              `${probeNote}; captured at=${parsed.at_token.slice(0, 6)}…`,
           })
           .select("id")
           .single();
         if (error) return json({ error: error.message }, 500);
-        return json({ ok: true, id: data.id });
-      },
-    },
-  },
-});
+        return json({
+          ok: true,
+          id: data.id,
+          status: initialStatus,
+          probe: { signedIn: probe.signedIn, conclusive: probe.conclusive, reason: probe.reason },
+        });

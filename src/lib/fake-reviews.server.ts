@@ -445,7 +445,12 @@ export async function probeAccountSignIn(
     // SNlM0e appears on the signed-in report page. Google's sign-in page
     // also embeds it, so pair its presence with a positive signed-in signal.
     const hasToken = /"SNlM0e":"([^"]+)"/.test(text);
-    const looksSignedOut = /ServiceLogin|accounts\.google\.com\/(?:signin|ServiceLogin|AccountChooser)/i.test(text);
+    // A signed-out response replaces the whole document with Google's sign-in
+    // shell whose <base href> points at accounts.google.com/v3/signin. Don't
+    // match on any "ServiceLogin" substring — the signed-in Maps page still
+    // links to it from the account switcher and other UI, so that regex was
+    // false-flagging good sessions as expired.
+    const looksSignedOut = /<base[^>]+href="https:\/\/accounts\.google\.com\/v3\/signin/i.test(text);
     if (hasToken && !looksSignedOut) {
       return { signedIn: true, reason: null, conclusive: true };
     }

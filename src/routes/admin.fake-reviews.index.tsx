@@ -59,16 +59,6 @@ const REASONS = [
   { key: "NOT_HELPFUL", label: "Not helpful" },
 ] as const;
 
-const COMMENT_TAGS = [
-  { key: "", label: "Any comment" },
-  { key: "policy_violation", label: "Policy violation" },
-  { key: "pii", label: "PII" },
-  { key: "phone_leak", label: "Phone leak" },
-  { key: "cyberbullying", label: "Cyberbullying" },
-  { key: "doxxing", label: "Doxxing" },
-  { key: "extortion", label: "Extortion" },
-  { key: "competitor_attack", label: "Competitor attack" },
-] as const;
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {

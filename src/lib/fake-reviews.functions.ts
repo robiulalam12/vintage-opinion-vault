@@ -123,15 +123,18 @@ export const deleteTemplatesBatch = createServerFn({ method: "POST" })
     z.object({ ids: z.array(z.string().uuid()).min(1).max(5000) }).parse(v),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin
+    let q = supabaseAdmin
       .from("fake_review_templates")
       .delete()
       .in("id", data.ids);
+    q = scopeToOwner(q, access.isAdmin, access.userId);
+    const { error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true, deleted: data.ids.length };
   });
+
 
 export const setTemplateStatus = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])

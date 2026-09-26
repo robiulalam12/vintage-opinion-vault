@@ -82,7 +82,7 @@ export function interpolate(
 function extractCookie(bundle: string, name: string): string | null {
   const re = new RegExp(`(?:^|;\\s*)${name.replace(/-/g, "\\-")}=([^;]+)`);
   const m = bundle.match(re);
-  return m ? m[1] : null;
+  return m?.[1] ?? null;
 }
 
 /**

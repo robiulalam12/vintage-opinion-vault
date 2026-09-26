@@ -172,9 +172,9 @@ function TemplatesTab() {
       if (r.status === "fresh") {
         toast.success("Template verified");
       } else if (r.status === "stale") {
-        toast.warning("Verification was inconclusive. Please retry.");
+        toast.warning(`Verification inconclusive: ${r.reason ?? "unknown"}`, { duration: 8000 });
       } else {
-        toast.error("Template session has expired");
+        toast.error(`Template session expired: ${r.reason ?? "Google rejected the session"}`, { duration: 8000 });
       }
       qc.invalidateQueries({ queryKey: ["fr-templates"] });
     },

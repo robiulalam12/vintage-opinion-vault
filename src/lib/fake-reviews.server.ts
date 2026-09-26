@@ -559,24 +559,28 @@ export async function fireOnce(
       if (rewritten !== body) injected = true;
       body = rewritten;
     }
-    // Mint a fresh per-account XSRF token — the captured `at=` belongs to the
-    // capture session and is rejected (code 7) when replayed under other cookies.
-    if (body && body.includes("at=")) {
-      const freshAt = await mintAtToken(template, timeoutMs);
-      if (!freshAt) {
+    // Always mint a fresh per-account token — do NOT gate on body.includes("at=").
+    // If a template ever lacks the param, replaceAtToken() will insert it via .set().
+    if (body) {
+      const mint = await mintAtToken(template, timeoutMs);
+      if (!mint.ok) {
+        console.error(
+          `[fireOnce] tpl=${template.id} authuser=${authuser}: mint failed (conclusive=${mint.conclusive}) — ${mint.reason}`,
+        );
         return {
           status: null,
           latency: 0,
           snippet: "",
-          error: `could not mint fresh Google token for authuser=${authuser} — cookies dead for this account, re-upload`,
+          error: mint.conclusive
+            ? `Google session rejected for authuser=${authuser} — re-upload cookies (${mint.reason})`
+            : `Could not reach Google to mint token — infra fault, not account (${mint.reason})`,
           injected,
-          authFailed: true,
+          // Only flip the template to "expired" when we're sure it's the account.
+          authFailed: mint.conclusive,
         };
       }
-      body = replaceAtToken(body, freshAt);
+      body = replaceAtToken(body, mint.token);
     }
-    init.body = body;
-  }
 
   const started = Date.now();
   try {

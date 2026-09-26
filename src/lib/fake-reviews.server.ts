@@ -415,7 +415,9 @@ export async function probeAccountSignIn(
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
   headers.set("x-goog-authuser", String(authuser));
 
-  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
+  // Same reasoning as mintAtToken: probe Maps home, not the report/submit
+  // page (which 400s / bounces to signin without a review-specific payload).
+  const pageUrl = `https://www.google.com/maps?authuser=${authuser}&hl=en`;
   try {
     let text = "";
     let status: number | null = null;

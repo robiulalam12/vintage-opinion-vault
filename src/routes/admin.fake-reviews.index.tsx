@@ -11,14 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-  DialogFooter,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -89,9 +82,15 @@ function StatusBadge({ status }: { status: string }) {
     cancelled: "bg-slate-200 text-slate-700",
   };
   if (status?.startsWith("drip:")) {
-    return <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">drip-feed</span>;
+    return (
+      <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-semibold text-violet-800">drip-feed</span>
+    );
   }
-  return <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${map[status] ?? "bg-slate-200 text-slate-700"}`}>{status}</span>;
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${map[status] ?? "bg-slate-200 text-slate-700"}`}>
+      {status}
+    </span>
+  );
 }
 
 function FakeReviewsPage() {
@@ -116,7 +115,11 @@ function FakeReviewsPage() {
 
       {overview.data ? (
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Kpi label="Fresh templates" value={overview.data.templates.fresh} sub={`${overview.data.templates.total} total`} />
+          <Kpi
+            label="Fresh templates"
+            value={overview.data.templates.fresh}
+            sub={`${overview.data.templates.total} total`}
+          />
           <Kpi label="Orders firing" value={overview.data.orders.firing} sub={`${overview.data.orders.done} done`} />
           <Kpi label="Shots (24h)" value={overview.data.shots.last24} sub={`${overview.data.shots.total} all-time`} />
           <Kpi label="Success" value={overview.data.shots.ok} sub={`${overview.data.shots.err} errors`} />
@@ -129,9 +132,15 @@ function FakeReviewsPage() {
           <TabsTrigger value="templates">Templates</TabsTrigger>
           <TabsTrigger value="comments">Comments</TabsTrigger>
         </TabsList>
-        <TabsContent value="orders" className="mt-4"><OrdersTab /></TabsContent>
-        <TabsContent value="templates" className="mt-4"><TemplatesTab /></TabsContent>
-        <TabsContent value="comments" className="mt-4"><CommentsTab /></TabsContent>
+        <TabsContent value="orders" className="mt-4">
+          <OrdersTab />
+        </TabsContent>
+        <TabsContent value="templates" className="mt-4">
+          <TemplatesTab />
+        </TabsContent>
+        <TabsContent value="comments" className="mt-4">
+          <CommentsTab />
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -159,12 +168,36 @@ function TemplatesTab() {
 
   const verifyM = useMutation({
     mutationFn: (id: string) => verifyFn({ data: { id } }),
-    onSuccess: (r) => { toast.success(`Verified: ${r.status}`); qc.invalidateQueries({ queryKey: ["fr-templates"] }); },
+    onSuccess: (r) => {
+      // r.probe is present when the server-fn forwards session.ts's response.
+      const signedIn = r.probe?.signedIn;
+      const status = r.status;
+      if (signedIn) {
+        toast.success(`Template added and verified against Google (authuser OK).`);
+      } else if (status === "stale") {
+        toast.warning(
+          `Template saved as "stale" — Google check was inconclusive: ${r.probe?.reason ?? "unknown"}. ` +
+            `Use Verify in the templates table to retry.`,
+        );
+      } else {
+        toast.success(`Template added (${r.cookies_parsed} cookies).`);
+      }
+      qc.invalidateQueries({ queryKey: ["fr-templates"] });
+      setOpen(false);
+      setLabel("");
+      setEmail("");
+      setAuthuser("0");
+      setCookieText("");
+      setNotes("");
+    },
     onError: (e: Error) => toast.error(e.message),
   });
   const deleteM = useMutation({
     mutationFn: (id: string) => deleteFn({ data: { id } }),
-    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["fr-templates"] }); },
+    onSuccess: () => {
+      toast.success("Deleted");
+      qc.invalidateQueries({ queryKey: ["fr-templates"] });
+    },
   });
   const statusM = useMutation({
     mutationFn: (v: { id: string; status: "fresh" | "disabled" }) => statusFn({ data: v }),
@@ -178,7 +211,8 @@ function TemplatesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Add extra Google accounts by uploading their cookies.txt — endpoint, headers, and body reuse an existing captured template.
+          Add extra Google accounts by uploading their cookies.txt — endpoint, headers, and body reuse an existing
+          captured template.
         </p>
         <div className="flex gap-2">
           <AddTemplateDialog />
@@ -188,49 +222,76 @@ function TemplatesTab() {
       </div>
       {rows.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
-          No captured sessions yet. Install the capture extension and open Google Maps signed in, or upload a cookies.txt above once at least one template exists.
+          No captured sessions yet. Install the capture extension and open Google Maps signed in, or upload a
+          cookies.txt above once at least one template exists.
         </div>
       ) : (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2">Label</th>
-            <th className="px-3 py-2">Tag</th>
-            <th className="px-3 py-2">Email</th>
-            <th className="px-3 py-2">Status</th>
-            <th className="px-3 py-2">Shots</th>
-            <th className="px-3 py-2">Captured</th>
-            <th className="px-3 py-2">Last error</th>
-            <th className="px-3 py-2 text-right">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.id} className="border-t border-border">
-              <td className="px-3 py-2 font-medium">{r.label}</td>
-              <td className="px-3 py-2">{r.tag ? <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{r.tag}</span> : <span className="text-muted-foreground">—</span>}</td>
-              <td className="px-3 py-2 text-muted-foreground">{r.google_email ?? "—"}</td>
-              <td className="px-3 py-2"><StatusBadge status={r.status} /></td>
-              <td className="px-3 py-2">{r.shots_fired}</td>
-              <td className="px-3 py-2 text-muted-foreground">{new Date(r.captured_at).toLocaleString()}</td>
-              <td className="px-3 py-2 max-w-[220px] truncate text-xs text-red-600">{r.last_error ?? ""}</td>
-              <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
-                <Button size="sm" variant="outline" disabled={verifyM.isPending} onClick={() => verifyM.mutate(r.id)}>
-                  <ShieldCheck className="mr-1 size-3" />Verify
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => statusM.mutate({ id: r.id, status: r.status === "disabled" ? "fresh" : "disabled" })}>
-                  {r.status === "disabled" ? "Enable" : "Disable"}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete this template?")) deleteM.mutate(r.id); }}>
-                  <Trash2 className="size-3" />
-                </Button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        <div className="overflow-x-auto rounded-xl border border-border">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Label</th>
+                <th className="px-3 py-2">Tag</th>
+                <th className="px-3 py-2">Email</th>
+                <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Shots</th>
+                <th className="px-3 py-2">Captured</th>
+                <th className="px-3 py-2">Last error</th>
+                <th className="px-3 py-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.id} className="border-t border-border">
+                  <td className="px-3 py-2 font-medium">{r.label}</td>
+                  <td className="px-3 py-2">
+                    {r.tag ? (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs">{r.tag}</span>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">{r.google_email ?? "—"}</td>
+                  <td className="px-3 py-2">
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td className="px-3 py-2">{r.shots_fired}</td>
+                  <td className="px-3 py-2 text-muted-foreground">{new Date(r.captured_at).toLocaleString()}</td>
+                  <td className="px-3 py-2 max-w-[220px] truncate text-xs text-red-600">{r.last_error ?? ""}</td>
+                  <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={verifyM.isPending}
+                      onClick={() => verifyM.mutate(r.id)}
+                    >
+                      <ShieldCheck className="mr-1 size-3" />
+                      Verify
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        statusM.mutate({ id: r.id, status: r.status === "disabled" ? "fresh" : "disabled" })
+                      }
+                    >
+                      {r.status === "disabled" ? "Enable" : "Disable"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        if (confirm("Delete this template?")) deleteM.mutate(r.id);
+                      }}
+                    >
+                      <Trash2 className="size-3" />
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );
@@ -261,7 +322,11 @@ function AddTemplateDialog() {
       toast.success(`Template added (${r.cookies_parsed} cookies).`);
       qc.invalidateQueries({ queryKey: ["fr-templates"] });
       setOpen(false);
-      setLabel(""); setEmail(""); setAuthuser("0"); setCookieText(""); setNotes("");
+      setLabel("");
+      setEmail("");
+      setAuthuser("0");
+      setCookieText("");
+      setNotes("");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -269,10 +334,15 @@ function AddTemplateDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="sm"><Plus className="mr-1 size-4" />Add from cookies.txt</Button>
+        <Button size="sm">
+          <Plus className="mr-1 size-4" />
+          Add from cookies.txt
+        </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Add template from cookies</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Add template from cookies</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -319,11 +389,10 @@ function AddTemplateDialog() {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button
-            disabled={m.isPending || !label.trim() || !cookieText.trim()}
-            onClick={() => m.mutate()}
-          >
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button disabled={m.isPending || !label.trim() || !cookieText.trim()} onClick={() => m.mutate()}>
             {m.isPending && <Loader2 className="mr-1 size-3 animate-spin" />}Add template
           </Button>
         </DialogFooter>
@@ -342,7 +411,13 @@ function BulkUploadDialog() {
   const [tag, setTag] = useState(() => `batch-${new Date().toISOString().slice(5, 16).replace(/[-T:]/g, "")}`);
   const [progress, setProgress] = useState<{ done: number; total: number; failed: number } | null>(null);
 
-  const labels = files.map((f) => f.name.replace(/\.txt$/i, "").replace(/[_-]+/g, " ").trim() || f.name);
+  const labels = files.map(
+    (f) =>
+      f.name
+        .replace(/\.txt$/i, "")
+        .replace(/[_-]+/g, " ")
+        .trim() || f.name,
+  );
 
   const m = useMutation({
     mutationFn: async () => {
@@ -357,7 +432,12 @@ function BulkUploadDialog() {
       const tagVal = tag.trim();
       // Server accepts max 50 items per call — chunk larger uploads.
       const CHUNK = 50;
-      const merged = { added: 0, total: items.length, failed: [] as { label: string; error: string }[], added_items: [] as unknown[] };
+      const merged = {
+        added: 0,
+        total: items.length,
+        failed: [] as { label: string; error: string }[],
+        added_items: [] as unknown[],
+      };
       for (let start = 0; start < items.length; start += CHUNK) {
         const slice = items.slice(start, start + CHUNK);
         setProgress({ done: merged.added, total: items.length, failed: merged.failed.length });
@@ -381,7 +461,10 @@ function BulkUploadDialog() {
         toast.success(`Added ${r.added} template${r.added === 1 ? "" : "s"}.`);
         qc.invalidateQueries({ queryKey: ["fr-templates"] });
         setOpen(false);
-        setFiles([]); setAuthuser("0"); setEmailPrefix(""); setProgress(null);
+        setFiles([]);
+        setAuthuser("0");
+        setEmailPrefix("");
+        setProgress(null);
       } else {
         toast.warning(`Added ${r.added}, ${r.failed.length} failed.`);
         qc.invalidateQueries({ queryKey: ["fr-templates"] });
@@ -391,12 +474,26 @@ function BulkUploadDialog() {
   });
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) { setFiles([]); setProgress(null); } }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) {
+          setFiles([]);
+          setProgress(null);
+        }
+      }}
+    >
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline"><Plus className="mr-1 size-4" />Bulk upload</Button>
+        <Button size="sm" variant="outline">
+          <Plus className="mr-1 size-4" />
+          Bulk upload
+        </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>Bulk add templates from cookies</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Bulk add templates from cookies</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -407,13 +504,17 @@ function BulkUploadDialog() {
             <div>
               <Label>Email prefix (optional)</Label>
               <Input value={emailPrefix} onChange={(e) => setEmailPrefix(e.target.value)} placeholder="robiul213" />
-              <p className="mt-1 text-xs text-muted-foreground">If set, each template gets <code>prefix+label@gmail.com</code>.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                If set, each template gets <code>prefix+label@gmail.com</code>.
+              </p>
             </div>
           </div>
           <div>
             <Label>Tag for this upload (required)</Label>
             <Input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="batch-sep-25" maxLength={40} />
-            <p className="mt-1 text-xs text-muted-foreground">All templates in this upload get this tag, so you can pick them by tag in orders.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              All templates in this upload get this tag, so you can pick them by tag in orders.
+            </p>
           </div>
           <div>
             <Label>cookies.txt files</Label>
@@ -428,13 +529,17 @@ function BulkUploadDialog() {
               }}
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Select multiple .txt exports at once. Each file becomes its own template, labeled by filename. Each must include <code>SAPISID</code>, <code>__Secure-1PAPISID</code>, or <code>__Secure-3PAPISID</code>.
+              Select multiple .txt exports at once. Each file becomes its own template, labeled by filename. Each must
+              include <code>SAPISID</code>, <code>__Secure-1PAPISID</code>, or <code>__Secure-3PAPISID</code>.
             </p>
           </div>
           {files.length > 0 && (
             <div className="max-h-40 overflow-y-auto rounded-lg border border-border text-xs">
               {files.map((f, i) => (
-                <div key={i} className="flex items-center justify-between border-b border-border px-2 py-1 last:border-0">
+                <div
+                  key={i}
+                  className="flex items-center justify-between border-b border-border px-2 py-1 last:border-0"
+                >
                   <span className="truncate">{labels[i]}</span>
                   <span className="text-muted-foreground">{(f.size / 1024).toFixed(1)} KB</span>
                 </div>
@@ -443,11 +548,15 @@ function BulkUploadDialog() {
           )}
           {progress && (
             <div className="rounded-lg border border-border bg-muted/30 p-3 text-sm">
-              <p className="font-medium">{progress.done}/{progress.total} added{progress.failed > 0 ? `, ${progress.failed} failed` : ""}.</p>
+              <p className="font-medium">
+                {progress.done}/{progress.total} added{progress.failed > 0 ? `, ${progress.failed} failed` : ""}.
+              </p>
               {m.data?.failed && m.data.failed.length > 0 && (
                 <ul className="mt-2 space-y-1 text-xs text-red-600">
                   {m.data.failed.map((f: { label: string; error: string }, i: number) => (
-                    <li key={i}><span className="font-medium">{f.label}:</span> {f.error}</li>
+                    <li key={i}>
+                      <span className="font-medium">{f.label}:</span> {f.error}
+                    </li>
                   ))}
                 </ul>
               )}
@@ -455,11 +564,10 @@ function BulkUploadDialog() {
           )}
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button
-            disabled={m.isPending || files.length === 0 || !tag.trim()}
-            onClick={() => m.mutate()}
-          >
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button disabled={m.isPending || files.length === 0 || !tag.trim()} onClick={() => m.mutate()}>
             {m.isPending && <Loader2 className="mr-1 size-3 animate-spin" />}
             Add {files.length || ""} template{files.length === 1 ? "" : "s"}
           </Button>
@@ -482,8 +590,7 @@ function BulkRemoveDialog({ rows }: { rows: FakeTemplateSummary[] }) {
 
   const visible = rows.filter(
     (r) =>
-      (filterTag === "__all__" || r.tag === filterTag) &&
-      (filterStatus === "__all__" || r.status === filterStatus),
+      (filterTag === "__all__" || r.tag === filterTag) && (filterStatus === "__all__" || r.status === filterStatus),
   );
   const visibleIds = visible.map((r) => r.id);
   const selectedCount = visibleIds.filter((id) => selected[id]).length;
@@ -524,43 +631,68 @@ function BulkRemoveDialog({ rows }: { rows: FakeTemplateSummary[] }) {
   });
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { setOpen(o); if (!o) setSelected({}); }}>
+    <Dialog
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (!o) setSelected({});
+      }}
+    >
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline"><Trash2 className="mr-1 size-4" />Bulk remove</Button>
+        <Button size="sm" variant="outline">
+          <Trash2 className="mr-1 size-4" />
+          Bulk remove
+        </Button>
       </DialogTrigger>
       <DialogContent className="max-w-3xl">
-        <DialogHeader><DialogTitle>Remove templates</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>Remove templates</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Select templates to delete permanently. Use the filters and quick-select buttons below.
           </p>
           <div className="flex flex-wrap items-center gap-3">
             <Select value={filterTag} onValueChange={setFilterTag}>
-              <SelectTrigger className="w-44"><SelectValue placeholder="Tag" /></SelectTrigger>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Tag" />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">All tags</SelectItem>
-                {tags.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                {tags.map((t) => (
+                  <SelectItem key={t} value={t}>
+                    {t}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={filterStatus} onValueChange={setFilterStatus}>
-              <SelectTrigger className="w-44"><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectTrigger className="w-44">
+                <SelectValue placeholder="Status" />
+              </SelectTrigger>
               <SelectContent>
                 <SelectItem value="__all__">All statuses</SelectItem>
-                {statuses.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                {statuses.map((s) => (
+                  <SelectItem key={s} value={s}>
+                    {s}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <div className="flex flex-wrap gap-2">
-              {tags.length > 0 && (
-                <span className="text-xs text-muted-foreground self-center">Select by tag:</span>
-              )}
+              {tags.length > 0 && <span className="text-xs text-muted-foreground self-center">Select by tag:</span>}
               {tags.map((t) => (
-                <Button key={t} size="sm" variant="outline" onClick={() => selectAllByTag(t)}>{t}</Button>
+                <Button key={t} size="sm" variant="outline" onClick={() => selectAllByTag(t)}>
+                  {t}
+                </Button>
               ))}
               {statuses.length > 0 && (
                 <>
                   <span className="text-xs text-muted-foreground self-center">By status:</span>
                   {statuses.map((s) => (
-                    <Button key={s} size="sm" variant="outline" onClick={() => selectAllByStatus(s)}>{s}</Button>
+                    <Button key={s} size="sm" variant="outline" onClick={() => selectAllByStatus(s)}>
+                      {s}
+                    </Button>
                   ))}
                 </>
               )}
@@ -571,7 +703,9 @@ function BulkRemoveDialog({ rows }: { rows: FakeTemplateSummary[] }) {
             <Button size="sm" variant="ghost" onClick={toggleAllVisible} disabled={visibleIds.length === 0}>
               {allVisibleSelected ? "Deselect visible" : "Select visible"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={clear} disabled={selectedCount === 0}>Clear</Button>
+            <Button size="sm" variant="ghost" onClick={clear} disabled={selectedCount === 0}>
+              Clear
+            </Button>
           </div>
 
           <div className="max-h-72 overflow-y-auto rounded-lg border border-border text-sm">
@@ -593,12 +727,18 @@ function BulkRemoveDialog({ rows }: { rows: FakeTemplateSummary[] }) {
                     </td>
                     <td className="px-2 py-1 font-medium">{r.label}</td>
                     <td className="px-2 py-1">{r.tag ?? "—"}</td>
-                    <td className="px-2 py-1"><StatusBadge status={r.status} /></td>
+                    <td className="px-2 py-1">
+                      <StatusBadge status={r.status} />
+                    </td>
                     <td className="px-2 py-1">{r.shots_fired}</td>
                   </tr>
                 ))}
                 {visible.length === 0 && (
-                  <tr><td colSpan={5} className="px-2 py-4 text-center text-muted-foreground">No templates match.</td></tr>
+                  <tr>
+                    <td colSpan={5} className="px-2 py-4 text-center text-muted-foreground">
+                      No templates match.
+                    </td>
+                  </tr>
                 )}
               </tbody>
             </table>
@@ -607,11 +747,16 @@ function BulkRemoveDialog({ rows }: { rows: FakeTemplateSummary[] }) {
           <p className="text-sm font-medium">{selectedCount} selected for deletion.</p>
         </div>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button variant="ghost" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
           <Button
             variant="destructive"
             disabled={m.isPending || selectedCount === 0}
-            onClick={() => { if (confirm(`Delete ${selectedCount} template${selectedCount === 1 ? "" : "s"}? This cannot be undone.`)) m.mutate(); }}
+            onClick={() => {
+              if (confirm(`Delete ${selectedCount} template${selectedCount === 1 ? "" : "s"}? This cannot be undone.`))
+                m.mutate();
+            }}
           >
             {m.isPending && <Loader2 className="mr-1 size-3 animate-spin" />}
             Delete {selectedCount || ""}
@@ -633,17 +778,25 @@ function OrdersTab() {
 
   const cancelM = useMutation({
     mutationFn: (id: string) => cancelFn({ data: { id } }),
-    onSuccess: () => { toast.success("Cancelled"); qc.invalidateQueries({ queryKey: ["fr-orders"] }); },
+    onSuccess: () => {
+      toast.success("Cancelled");
+      qc.invalidateQueries({ queryKey: ["fr-orders"] });
+    },
   });
   const deleteM = useMutation({
     mutationFn: (id: string) => deleteFn({ data: { id } }),
-    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["fr-orders"] }); },
+    onSuccess: () => {
+      toast.success("Deleted");
+      qc.invalidateQueries({ queryKey: ["fr-orders"] });
+    },
   });
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Each order fires N reports per template against one Google review.</p>
+        <p className="text-sm text-muted-foreground">
+          Each order fires N reports per template against one Google review.
+        </p>
         <NewOrderDialog onCreated={() => qc.invalidateQueries({ queryKey: ["fr-orders"] })} />
       </div>
 
@@ -670,26 +823,43 @@ function OrdersTab() {
               {(q.data ?? []).map((o) => (
                 <tr key={o.id} className="border-t border-border">
                   <td className="px-3 py-2">
-                    <Link to="/admin/fake-reviews/$orderId" params={{ orderId: o.id }} className="font-medium hover:underline">
+                    <Link
+                      to="/admin/fake-reviews/$orderId"
+                      params={{ orderId: o.id }}
+                      className="font-medium hover:underline"
+                    >
                       {o.name}
                     </Link>
                     <p className="max-w-[260px] truncate text-xs text-muted-foreground">{o.target_url}</p>
                   </td>
                   <td className="px-3 py-2 text-xs">{o.reason_code}</td>
-                  <td className="px-3 py-2"><StatusBadge status={o.status} /></td>
+                  <td className="px-3 py-2">
+                    <StatusBadge status={o.status} />
+                  </td>
                   <td className="px-3 py-2 text-xs">
-                    <span className="text-emerald-700">{o.shots_ok} ok</span> · <span className="text-red-600">{o.shots_err} err</span>
+                    <span className="text-emerald-700">{o.shots_ok} ok</span> ·{" "}
+                    <span className="text-red-600">{o.shots_err} err</span>
                     <span className="ml-1 text-muted-foreground">/ {o.template_ids.length * o.shots_per_template}</span>
                   </td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{new Date(o.created_at).toLocaleString()}</td>
                   <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
                     <Button asChild size="sm" variant="outline">
-                      <Link to="/admin/fake-reviews/$orderId" params={{ orderId: o.id }}>Open</Link>
+                      <Link to="/admin/fake-reviews/$orderId" params={{ orderId: o.id }}>
+                        Open
+                      </Link>
                     </Button>
                     {o.status !== "done" && o.status !== "cancelled" ? (
-                      <Button size="sm" variant="ghost" onClick={() => cancelM.mutate(o.id)}>Cancel</Button>
+                      <Button size="sm" variant="ghost" onClick={() => cancelM.mutate(o.id)}>
+                        Cancel
+                      </Button>
                     ) : null}
-                    <Button size="sm" variant="ghost" onClick={() => { if (confirm("Delete this order and all shots?")) deleteM.mutate(o.id); }}>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        if (confirm("Delete this order and all shots?")) deleteM.mutate(o.id);
+                      }}
+                    >
                       <Trash2 className="size-3" />
                     </Button>
                   </td>
@@ -707,7 +877,7 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
-  const [reason, setReason] = useState<typeof REASONS[number]["key"]>("HARMFUL");
+  const [reason, setReason] = useState<(typeof REASONS)[number]["key"]>("HARMFUL");
   const [tag, setTag] = useState<string>("");
   const [shots, setShots] = useState(100);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -717,21 +887,24 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
   const templates = useQuery({ queryKey: ["fr-templates"], queryFn: () => listFn(), enabled: open });
 
   const createM = useMutation({
-    mutationFn: () => createFn({
-      data: {
-        name,
-        target_url: url,
-        reason_code: reason,
-        comment_tag: tag && tag !== "__any" ? (tag as any) : null,
-        shots_per_template: shots,
-        template_ids: Array.from(selected),
-        note: "",
-      },
-    }),
+    mutationFn: () =>
+      createFn({
+        data: {
+          name,
+          target_url: url,
+          reason_code: reason,
+          comment_tag: tag && tag !== "__any" ? (tag as any) : null,
+          shots_per_template: shots,
+          template_ids: Array.from(selected),
+          note: "",
+        },
+      }),
     onSuccess: () => {
       toast.success("Order created");
       setOpen(false);
-      setName(""); setUrl(""); setSelected(new Set());
+      setName("");
+      setUrl("");
+      setSelected(new Set());
       onCreated();
     },
     onError: (e: Error) => toast.error(e.message),
@@ -742,7 +915,8 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
   const [selTags, setSelTags] = useState<Set<string>>(new Set());
   const toggleTag = (tg: string) => {
     const n = new Set(selTags);
-    if (n.has(tg)) n.delete(tg); else n.add(tg);
+    if (n.has(tg)) n.delete(tg);
+    else n.add(tg);
     setSelTags(n);
     setSelected(new Set(fresh.filter((t) => t.tag && n.has(t.tag)).map((t) => t.id)));
   };
@@ -750,10 +924,15 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button><Plus className="mr-1 size-4" />New order</Button>
+        <Button>
+          <Plus className="mr-1 size-4" />
+          New order
+        </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl">
-        <DialogHeader><DialogTitle>New fake review order</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>New fake review order</DialogTitle>
+        </DialogHeader>
         <div className="space-y-3">
           <div>
             <Label>Name</Label>
@@ -761,30 +940,52 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
           </div>
           <div>
             <Label>Target review URL</Label>
-            <Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://www.google.com/maps/…/data=!…!2m5!1s…" />
+            <Input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              placeholder="https://www.google.com/maps/…/data=!…!2m5!1s…"
+            />
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
               <Label>Reason</Label>
               <Select value={reason} onValueChange={(v) => setReason(v as any)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
                 <SelectContent>
-                  {REASONS.map((r) => <SelectItem key={r.key} value={r.key}>{r.label}</SelectItem>)}
+                  {REASONS.map((r) => (
+                    <SelectItem key={r.key} value={r.key}>
+                      {r.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Comment tag</Label>
               <Select value={tag} onValueChange={setTag}>
-                <SelectTrigger><SelectValue placeholder="Any" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Any" />
+                </SelectTrigger>
                 <SelectContent>
-                  {COMMENT_TAGS.map((t) => <SelectItem key={t.key || "any"} value={t.key || "__any"}>{t.label}</SelectItem>)}
+                  {COMMENT_TAGS.map((t) => (
+                    <SelectItem key={t.key || "any"} value={t.key || "__any"}>
+                      {t.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div>
               <Label>Shots per template</Label>
-              <Input type="number" value={shots} min={1} max={500} onChange={(e) => setShots(Number(e.target.value) || 1)} />
+              <Input
+                type="number"
+                value={shots}
+                min={1}
+                max={500}
+                onChange={(e) => setShots(Number(e.target.value) || 1)}
+              />
             </div>
           </div>
           <div>
@@ -796,7 +997,13 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
                     const on = selTags.has(tg);
                     const count = fresh.filter((t) => t.tag === tg).length;
                     return (
-                      <Button key={tg} type="button" size="sm" variant={on ? "default" : "outline"} onClick={() => toggleTag(tg)}>
+                      <Button
+                        key={tg}
+                        type="button"
+                        size="sm"
+                        variant={on ? "default" : "outline"}
+                        onClick={() => toggleTag(tg)}
+                      >
                         {tg} <span className="ml-1 opacity-70">({count})</span>
                       </Button>
                     );
@@ -807,8 +1014,26 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
             <div className="mb-2 flex items-center justify-between">
               <Label>Templates ({selected.size} selected)</Label>
               <div className="flex gap-2">
-                <Button size="sm" variant="outline" onClick={() => { setSelTags(new Set()); setSelected(new Set(fresh.map((t) => t.id))); }}>Select fresh</Button>
-                <Button size="sm" variant="ghost" onClick={() => { setSelTags(new Set()); setSelected(new Set()); }}>Clear</Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setSelTags(new Set());
+                    setSelected(new Set(fresh.map((t) => t.id)));
+                  }}
+                >
+                  Select fresh
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    setSelTags(new Set());
+                    setSelected(new Set());
+                  }}
+                >
+                  Clear
+                </Button>
               </div>
             </div>
             <div className="max-h-56 space-y-1 overflow-y-auto rounded-lg border border-border p-2">
@@ -819,7 +1044,8 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
                     onCheckedChange={(v) => {
                       setSelected((s) => {
                         const n = new Set(s);
-                        if (v) n.add(t.id); else n.delete(t.id);
+                        if (v) n.add(t.id);
+                        else n.delete(t.id);
                         return n;
                       });
                     }}
@@ -836,11 +1062,10 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
           </div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-          <Button
-            disabled={!name || !url || selected.size === 0 || createM.isPending}
-            onClick={() => createM.mutate()}
-          >
+          <Button variant="outline" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button disabled={!name || !url || selected.size === 0 || createM.isPending} onClick={() => createM.mutate()}>
             {createM.isPending ? <Loader2 className="mr-1 size-4 animate-spin" /> : null}
             Create order
           </Button>
@@ -881,20 +1106,36 @@ function CommentsTab() {
   });
   const deleteAllM = useMutation({
     mutationFn: () => deleteAllFn({}),
-    onSuccess: () => { toast.success("Cleared"); qc.invalidateQueries({ queryKey: ["fr-comments"] }); },
+    onSuccess: () => {
+      toast.success("Cleared");
+      qc.invalidateQueries({ queryKey: ["fr-comments"] });
+    },
   });
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-border p-4">
         <Label>Add comments (one per line)</Label>
-        <Textarea value={text} onChange={(e) => setText(e.target.value)} rows={5} className="mt-2" placeholder="Terrible experience.&#10;Do not trust this business.&#10;…" />
+        <Textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={5}
+          className="mt-2"
+          placeholder="Terrible experience.&#10;Do not trust this business.&#10;…"
+        />
         <div className="mt-3 flex gap-2">
           <Button disabled={!text.trim() || addM.isPending} onClick={() => addM.mutate()}>
             {addM.isPending ? <Loader2 className="mr-1 size-4 animate-spin" /> : <Plus className="mr-1 size-4" />}
             Add
           </Button>
-          <Button variant="outline" onClick={() => { if (confirm("Delete ALL comments?")) deleteAllM.mutate(); }}>Delete all</Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              if (confirm("Delete ALL comments?")) deleteAllM.mutate();
+            }}
+          >
+            Delete all
+          </Button>
         </div>
       </div>
       {q.isLoading ? (
@@ -916,15 +1157,24 @@ function CommentsTab() {
                   <td className="px-3 py-2">{c.text}</td>
                   <td className="px-3 py-2 text-xs text-muted-foreground">{c.times_used}</td>
                   <td className="px-3 py-2">
-                    <Checkbox checked={c.active} onCheckedChange={(v) => toggleM.mutate({ id: c.id, active: Boolean(v) })} />
+                    <Checkbox
+                      checked={c.active}
+                      onCheckedChange={(v) => toggleM.mutate({ id: c.id, active: Boolean(v) })}
+                    />
                   </td>
                   <td className="px-3 py-2 text-right">
-                    <Button size="sm" variant="ghost" onClick={() => deleteM.mutate(c.id)}><Trash2 className="size-3" /></Button>
+                    <Button size="sm" variant="ghost" onClick={() => deleteM.mutate(c.id)}>
+                      <Trash2 className="size-3" />
+                    </Button>
                   </td>
                 </tr>
               ))}
               {(q.data ?? []).length === 0 ? (
-                <tr><td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">No comments yet.</td></tr>
+                <tr>
+                  <td colSpan={4} className="p-6 text-center text-sm text-muted-foreground">
+                    No comments yet.
+                  </td>
+                </tr>
               ) : null}
             </tbody>
           </table>

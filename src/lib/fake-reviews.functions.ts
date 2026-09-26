@@ -142,12 +142,14 @@ export const setTemplateStatus = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), status: z.enum(["fresh", "stale", "expired", "disabled"]) }).parse(v),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin
+    let q = supabaseAdmin
       .from("fake_review_templates")
       .update({ status: data.status })
       .eq("id", data.id);
+    q = scopeToOwner(q, access.isAdmin, access.userId);
+    const { error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true };
   });

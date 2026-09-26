@@ -142,15 +142,33 @@ export function parseBatchExecuteResult(raw: string): {
   reason: string | null;
 } {
   if (!raw) return { accepted: false, errorCode: null, reason: "empty response" };
-  // Google prefixes the JSON with the anti-hijack ")]}'" line.
+  // Google prefixes the JSON with the anti-hijack ")]}'" line, then sends
+  // length-prefixed JSON arrays, one per line:
+  //
+  //   )]}'
+  //   107
+  //   [["wrb.fr","qVL8Rd","[]",null,null,null,"generic"],["di",601],...]
+  //   25
+  //   [["e",4,null,null,143]]
+  //
+  // The trailing ["e",4,...] frame appears on SUCCESSFUL reports too — it is
+  // not an error. Parse each array line independently and only look at
+  // wrb.fr / er frames.
   const body = raw.replace(/^\)\]\}'\s*/, "").trim();
   try {
-    // Response is line-delimited: first line is a length, second is the array.
-    const jsonStart = body.indexOf("[");
-    if (jsonStart < 0) return { accepted: false, errorCode: null, reason: "no envelope" };
-    const parsed = JSON.parse(body.slice(jsonStart));
-    if (!Array.isArray(parsed)) return { accepted: false, errorCode: null, reason: "bad envelope" };
-    for (const frame of parsed) {
+    const frames: unknown[] = [];
+    for (const line of body.split("\n")) {
+      const t = line.trim();
+      if (!t.startsWith("[")) continue;
+      try {
+        const parsed = JSON.parse(t);
+        if (Array.isArray(parsed)) frames.push(...parsed);
+      } catch {
+        // skip partial/length lines
+      }
+    }
+    if (frames.length === 0) return { accepted: false, errorCode: null, reason: "no envelope" };
+    for (const frame of frames) {
       if (!Array.isArray(frame)) continue;
       if (frame[0] === "er") {
         const code = typeof frame[5] === "number" ? frame[5] : null;

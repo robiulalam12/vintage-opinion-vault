@@ -305,7 +305,10 @@ async function mintAtToken(
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
   headers.set("x-goog-authuser", String(authuser));
 
-  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
+  // Maps home reliably embeds SNlM0e when signed in. The report/submit page
+  // requires a review-specific payload and 400s / redirects to signin without
+  // one, so it's useless for minting a fresh token in isolation.
+  const pageUrl = `https://www.google.com/maps?authuser=${authuser}&hl=en`;
 
   let status: number | null = null;
   let location: string | null = null;

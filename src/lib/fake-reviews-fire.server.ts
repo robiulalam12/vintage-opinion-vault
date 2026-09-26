@@ -91,7 +91,6 @@ export async function fireOrderCore(supabaseAdmin: any, orderId: string, max: nu
       .from("fake_review_comments")
       .select("id,text,times_used")
       .eq("active", true);
-    if (order.comment_tag) commentQuery = commentQuery.eq("tag", order.comment_tag);
     const { data: commentRows } = await commentQuery;
     const commentPool = (commentRows ?? []) as Array<{
       id: string;

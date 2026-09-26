@@ -305,7 +305,10 @@ async function mintAtToken(
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
   headers.set("x-goog-authuser", String(authuser));
 
-  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
+  // Maps home reliably embeds SNlM0e when signed in. The report/submit page
+  // requires a review-specific payload and 400s / redirects to signin without
+  // one, so it's useless for minting a fresh token in isolation.
+  const pageUrl = `https://www.google.com/maps?authuser=${authuser}&hl=en`;
 
   let status: number | null = null;
   let location: string | null = null;
@@ -412,7 +415,9 @@ export async function probeAccountSignIn(
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
   headers.set("x-goog-authuser", String(authuser));
 
-  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
+  // Same reasoning as mintAtToken: probe Maps home, not the report/submit
+  // page (which 400s / bounces to signin without a review-specific payload).
+  const pageUrl = `https://www.google.com/maps?authuser=${authuser}&hl=en`;
   try {
     let text = "";
     let status: number | null = null;
@@ -440,7 +445,12 @@ export async function probeAccountSignIn(
     // SNlM0e appears on the signed-in report page. Google's sign-in page
     // also embeds it, so pair its presence with a positive signed-in signal.
     const hasToken = /"SNlM0e":"([^"]+)"/.test(text);
-    const looksSignedOut = /ServiceLogin|accounts\.google\.com\/(?:signin|ServiceLogin|AccountChooser)/i.test(text);
+    // A signed-out response replaces the whole document with Google's sign-in
+    // shell whose <base href> points at accounts.google.com/v3/signin. Don't
+    // match on any "ServiceLogin" substring — the signed-in Maps page still
+    // links to it from the account switcher and other UI, so that regex was
+    // false-flagging good sessions as expired.
+    const looksSignedOut = /<base[^>]+href="https:\/\/accounts\.google\.com\/v3\/signin/i.test(text);
     if (hasToken && !looksSignedOut) {
       return { signedIn: true, reason: null, conclusive: true };
     }

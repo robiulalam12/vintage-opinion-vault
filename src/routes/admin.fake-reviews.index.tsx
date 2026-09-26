@@ -169,26 +169,14 @@ function TemplatesTab() {
   const verifyM = useMutation({
     mutationFn: (id: string) => verifyFn({ data: { id } }),
     onSuccess: (r) => {
-      // r.probe is present when the server-fn forwards session.ts's response.
-      const signedIn = r.probe?.signedIn;
-      const status = r.status;
-      if (signedIn) {
-        toast.success(`Template added and verified against Google (authuser OK).`);
-      } else if (status === "stale") {
-        toast.warning(
-          `Template saved as "stale" — Google check was inconclusive: ${r.probe?.reason ?? "unknown"}. ` +
-            `Use Verify in the templates table to retry.`,
-        );
+      if (r.status === "fresh") {
+        toast.success("Template verified");
+      } else if (r.status === "stale") {
+        toast.warning("Verification was inconclusive. Please retry.");
       } else {
-        toast.success(`Template added (${r.cookies_parsed} cookies).`);
+        toast.error("Template session has expired");
       }
       qc.invalidateQueries({ queryKey: ["fr-templates"] });
-      setOpen(false);
-      setLabel("");
-      setEmail("");
-      setAuthuser("0");
-      setCookieText("");
-      setNotes("");
     },
     onError: (e: Error) => toast.error(e.message),
   });

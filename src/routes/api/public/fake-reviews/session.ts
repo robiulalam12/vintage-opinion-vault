@@ -1,5 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
+import { randomUUID } from "node:crypto"; // or globalThis.crypto.randomUUID() on Workers
+
+import { checkCaptureExtensionKey, json, preflight, probeAccountSignIn } from "@/lib/fake-reviews.server";
+
+import { createFileRoute } from "@tanstack/react-router";
+import { z } from "zod";
 
 import { checkCaptureExtensionKey, json, preflight } from "@/lib/fake-reviews.server";
 
@@ -46,9 +52,9 @@ function buildHeaders(userAgent: string, authuser: number): Record<string, strin
     "user-agent": userAgent,
     "x-same-domain": "1",
     "x-goog-authuser": String(authuser),
-    "origin": "https://www.google.com",
-    "referer": "https://www.google.com/maps",
-    "accept": "*/*",
+    origin: "https://www.google.com",
+    referer: "https://www.google.com/maps",
+    accept: "*/*",
     "accept-language": "en-US,en;q=0.9",
   };
 }
@@ -95,8 +101,7 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
             body_kind: "form",
             status: "fresh",
             notes:
-              (parsed.notes ? parsed.notes + " — " : "") +
-              `session-only capture at=${parsed.at_token.slice(0, 6)}…`,
+              (parsed.notes ? parsed.notes + " — " : "") + `session-only capture at=${parsed.at_token.slice(0, 6)}…`,
           })
           .select("id")
           .single();

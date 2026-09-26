@@ -283,13 +283,14 @@ const atTokenCache = new Map<string, { token: string; expires: number }>();
 const AT_TOKEN_TTL = 30 * 60 * 1000;
 
 async function mintAtToken(
-  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json">,
+  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json" | "auth_user_index">,
   timeoutMs: number,
 ): Promise<string | null> {
   const cached = atTokenCache.get(template.id);
   if (cached && cached.expires > Date.now()) return cached.token;
   if (!template.cookie_bundle) return null;
 
+  const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   const headers = new Headers();
   headers.set("cookie", template.cookie_bundle);
   const ua = template.headers_json?.["user-agent"] ?? template.headers_json?.["User-Agent"];
@@ -300,8 +301,14 @@ async function mintAtToken(
       : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
   );
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
+  // The Google multi-login cookie jar is shared across every signed-in
+  // account; the authuser index is what picks which one this request acts
+  // as. Without it Google mints the SNlM0e token for account 0 (or whichever
+  // account is default), and every replay under this template's cookies then
+  // fails as "session/token invalid" — the exact "expired" symptom users see.
+  headers.set("x-goog-authuser", String(authuser));
 
-  const pageUrl = "https://www.google.com/local/content/rap/report/submit?hl=en";
+  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
   try {
     let text: string;
     if (relayConfigured()) {

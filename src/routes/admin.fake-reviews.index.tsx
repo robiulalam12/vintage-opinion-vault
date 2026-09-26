@@ -605,26 +605,10 @@ function BulkRemoveDialog({ rows }: { rows: FakeTemplateSummary[] }) {
   const m = useMutation({
     mutationFn: () => deleteFn({ data: { ids: selectedIds } }),
     onSuccess: (r) => {
-      const signedIn = (r as { probe?: { signedIn?: boolean; reason?: string | null } }).probe?.signedIn;
-      const status = (r as { status?: string }).status;
-      const reason = (r as { probe?: { reason?: string | null } }).probe?.reason;
-      if (signedIn) {
-        toast.success("Template added and verified against Google (authuser OK).");
-      } else if (status === "stale") {
-        toast.warning(
-          `Template saved as "stale" — Google check was inconclusive: ${reason ?? "unknown"}. ` +
-            `Use Verify in the templates table to retry.`,
-        );
-      } else {
-        toast.success(`Template added (${r.cookies_parsed} cookies).`);
-      }
+      toast.success(`${r.deleted} template${r.deleted === 1 ? "" : "s"} removed.`);
       qc.invalidateQueries({ queryKey: ["fr-templates"] });
+      setSelected({});
       setOpen(false);
-      setLabel("");
-      setEmail("");
-      setAuthuser("0");
-      setCookieText("");
-      setNotes("");
     },
     onError: (e: Error) => toast.error(e.message),
   });

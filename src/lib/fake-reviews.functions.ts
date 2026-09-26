@@ -338,7 +338,7 @@ export const addTemplateFromCookies = createServerFn({ method: "POST" })
       .parse(v),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    await assertSection(context);
     const cookies = parseCookieText(data.cookie_text);
     if (cookies.size === 0) throw new Error("Could not parse any cookies from that file.");
     const sapisid =
@@ -431,7 +431,7 @@ export const addTemplatesFromCookiesBatch = createServerFn({ method: "POST" })
       .parse(v),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: existing, error: baseErr } = await supabaseAdmin
       .from("fake_review_templates")
@@ -521,21 +521,29 @@ export const addTemplatesFromCookiesBatch = createServerFn({ method: "POST" })
 export const listOrders = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: orders, error } = await supabaseAdmin
+    let oq = supabaseAdmin
       .from("fake_review_orders")
       .select(
         "id,name,target_url,canonical_url,feature_id,review_id,reason_code,comment_tag,shots_per_template,template_ids,status,created_at,fired_at,done_at",
       )
       .order("created_at", { ascending: false });
+    oq = scopeToOwner(oq, access.isAdmin, access.userId);
+    const { data: orders, error } = await oq;
     if (error) throw new Error(error.message);
-    const { data: shots, error: shotsErr } = await supabaseAdmin
-      .from("fake_review_shots")
-      .select("order_id,http_status,error");
-    if (shotsErr) throw new Error(shotsErr.message);
+    const orderIds = (orders ?? []).map((o: any) => o.id);
+    let shots: any[] = [];
+    if (orderIds.length > 0) {
+      const { data: sh, error: shotsErr } = await supabaseAdmin
+        .from("fake_review_shots")
+        .select("order_id,http_status,error")
+        .in("order_id", orderIds);
+      if (shotsErr) throw new Error(shotsErr.message);
+      shots = sh ?? [];
+    }
     return (orders ?? []).map((o: any): FakeOrderSummary => {
-      const rows = (shots ?? []).filter((s: any) => s.order_id === o.id);
+      const rows = shots.filter((s: any) => s.order_id === o.id);
       const ok = rows.filter((r: any) => r.http_status && r.http_status < 400).length;
       const err = rows.length - ok;
       return { ...o, shots_total: rows.length, shots_ok: ok, shots_err: err };
@@ -581,8 +589,20 @@ export const createOrder = createServerFn({ method: "POST" })
       .parse(v),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Non-admins can only build orders from templates they own; admins can
+    // pool anyone's templates (including shared/null-owner captures).
+    let tOwnerQ = supabaseAdmin
+      .from("fake_review_templates")
+      .select("id")
+      .in("id", data.template_ids);
+    tOwnerQ = scopeToOwner(tOwnerQ, access.isAdmin, access.userId);
+    const { data: ownedTpls, error: ownedErr } = await tOwnerQ;
+    if (ownedErr) throw new Error(ownedErr.message);
+    if ((ownedTpls?.length ?? 0) !== data.template_ids.length) {
+      throw new Error("One or more selected templates are not yours");
+    }
     const { resolveProfileTarget } = await import("@/lib/profile-report.server");
     const resolved = await resolveProfileTarget(data.target_url);
     if (!resolved.ok || !resolved.canonical_url) {
@@ -618,15 +638,16 @@ export const getOrder = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .inputValidator((v: unknown) => z.object({ id: z.string().uuid() }).parse(v))
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: order, error } = await supabaseAdmin
+    let oq = supabaseAdmin
       .from("fake_review_orders")
       .select(
         "id,name,target_url,canonical_url,feature_id,review_id,reason_code,comment_tag,shots_per_template,template_ids,status,created_at,fired_at,done_at,note",
       )
-      .eq("id", data.id)
-      .maybeSingle();
+      .eq("id", data.id);
+    oq = scopeToOwner(oq, access.isAdmin, access.userId);
+    const { data: order, error } = await oq.maybeSingle();
     if (error) throw new Error(error.message);
     if (!order) return { order: null, shots: [] as FakeShotRow[] };
 
@@ -645,26 +666,32 @@ export const cancelOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((v: unknown) => z.object({ id: z.string().uuid() }).parse(v))
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin
+    let q = supabaseAdmin
       .from("fake_review_orders")
       .update({ status: "cancelled" })
       .eq("id", data.id);
+    q = scopeToOwner(q, access.isAdmin, access.userId);
+    const { error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
 
 export const deleteOrder = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((v: unknown) => z.object({ id: z.string().uuid() }).parse(v))
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin.from("fake_review_orders").delete().eq("id", data.id);
+    let q = supabaseAdmin.from("fake_review_orders").delete().eq("id", data.id);
+    q = scopeToOwner(q, access.isAdmin, access.userId);
+    const { error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true };
   });
+
 
 /**
  * Fires one wave for an order. Because a single Worker request has a
@@ -680,27 +707,54 @@ export const fireOrderWave = createServerFn({ method: "POST" })
     z.object({ id: z.string().uuid(), max: z.number().int().min(1).max(200).default(120) }).parse(v),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    // Ownership check before firing: non-admins can only fire their own orders.
+    let oq = supabaseAdmin.from("fake_review_orders").select("id").eq("id", data.id);
+    oq = scopeToOwner(oq, access.isAdmin, access.userId);
+    const { data: owned, error: ownErr } = await oq.maybeSingle();
+    if (ownErr) throw new Error(ownErr.message);
+    if (!owned) throw new Error("Order not found");
     const { fireOrderCore } = await import("@/lib/fake-reviews-fire.server");
     return fireOrderCore(supabaseAdmin, data.id, data.max);
   });
+
 
 /* --------------------------- dashboard kpi rollup ------------------------- */
 
 export const fakeReviewsOverview = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const [{ data: tpls }, { data: orders }, { data: shots }] = await Promise.all([
-      supabaseAdmin.from("fake_review_templates").select("status,shots_fired"),
-      supabaseAdmin.from("fake_review_orders").select("status"),
-      supabaseAdmin.from("fake_review_shots").select("http_status,fired_at"),
-    ]);
+    const tplQ = scopeToOwner(
+      supabaseAdmin.from("fake_review_templates").select("status,shots_fired,created_by"),
+      access.isAdmin,
+      access.userId,
+    );
+    const ordQ = scopeToOwner(
+      supabaseAdmin.from("fake_review_orders").select("id,status"),
+      access.isAdmin,
+      access.userId,
+    );
+    const [{ data: tpls }, { data: orders }] = await Promise.all([tplQ, ordQ]);
+    const orderIds = (orders ?? []).map((o: any) => o.id);
+    let shots: any[] = [];
+    if (access.isAdmin) {
+      const { data: sh } = await supabaseAdmin
+        .from("fake_review_shots")
+        .select("http_status,fired_at");
+      shots = sh ?? [];
+    } else if (orderIds.length > 0) {
+      const { data: sh } = await supabaseAdmin
+        .from("fake_review_shots")
+        .select("http_status,fired_at")
+        .in("order_id", orderIds);
+      shots = sh ?? [];
+    }
     const templates = tpls ?? [];
     const orderRows = orders ?? [];
-    const shotRows = shots ?? [];
+    const shotRows = shots;
     const now = Date.now();
     const last24 = shotRows.filter((s: any) => now - new Date(s.fired_at).getTime() < 86400000);
     return {

@@ -426,10 +426,23 @@ function replaceAtToken(rawBody: string, at: string): string {
   }
 }
 
+/**
+ * Ensures the endpoint URL carries `authuser=<N>` matching the template's
+ * captured slot. Google's multi-login cookie jar is shared across accounts;
+ * without this param the call runs as the default (slot 0) account and
+ * fails with error code 7 for every other slot.
+ */
+function ensureAuthuser(url: string, authuser: number): string {
+  if (/[?&]authuser=/.test(url)) {
+    return url.replace(/([?&]authuser=)\d+/, `$1${authuser}`);
+  }
+  return url + (url.includes("?") ? "&" : "?") + `authuser=${authuser}`;
+}
+
 export async function fireOnce(
   template: Pick<
     TemplateRow,
-    "id" | "endpoint_url" | "method" | "headers_json" | "cookie_bundle" | "body_template" | "body_kind"
+    "id" | "endpoint_url" | "method" | "headers_json" | "cookie_bundle" | "body_template" | "body_kind" | "auth_user_index"
   >,
   vars: {
     REVIEW_ID: string;
@@ -445,9 +458,13 @@ export async function fireOnce(
   snippet: string;
   error: string | null;
   injected: boolean;
+  /** True only when Google itself rejected the caller's session (401/403 upstream, or wrb.fr code 7). */
+  authFailed: boolean;
 }> {
+  const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   let url = interpolate(template.endpoint_url, vars);
   url = rewriteEndpointUrl(url, vars.REVIEW_ID);
+  url = ensureAuthuser(url, authuser);
   const rawHeaders = template.headers_json ?? {};
   const headers = new Headers();
   for (const [k, v] of Object.entries(rawHeaders)) {
@@ -457,6 +474,8 @@ export async function fireOnce(
     headers.set(k, interpolate(v, vars));
   }
   if (template.cookie_bundle) headers.set("cookie", template.cookie_bundle);
+  // Route this request to the correct signed-in account in the shared jar.
+  headers.set("x-goog-authuser", String(authuser));
 
   const method = (template.method || "POST").toUpperCase();
   const init: RequestInit = {
@@ -484,8 +503,9 @@ export async function fireOnce(
           status: null,
           latency: 0,
           snippet: "",
-          error: "could not mint fresh Google token — account cookies likely dead, re-upload cookies",
+          error: `could not mint fresh Google token for authuser=${authuser} — cookies dead for this account, re-upload`,
           injected,
+          authFailed: true,
         };
       }
       body = replaceAtToken(body, freshAt);
@@ -495,23 +515,15 @@ export async function fireOnce(
 
   const started = Date.now();
   try {
-    // Route through the VPS relay + residential proxy when configured, so
-    // each Google account reports from its own sticky USA IP. Falls back to
-    // a direct fetch when the relay isn't set up.
     let status: number;
     let text: string;
+    let origin: RelayOrigin = "upstream";
     if (relayConfigured()) {
       const body = typeof init.body === "string" ? init.body : undefined;
-      const relayRes = await fetchViaRelay(
-        url,
-        method,
-        headers,
-        body,
-        template.id,
-        timeoutMs,
-      );
+      const relayRes = await fetchViaRelay(url, method, headers, body, template.id, timeoutMs);
       status = relayRes.status;
       text = relayRes.text;
+      origin = relayRes.origin;
     } else {
       const res = await fetch(url, init);
       status = res.status;
@@ -522,11 +534,20 @@ export async function fireOnce(
     // the wrb.fr envelope. Parse it so a rejected report is surfaced as an
     // error instead of being logged as a silent success.
     let error: string | null = null;
-    if (status === 200 && (url.includes("batchexecute") || text.includes("wrb.fr"))) {
+    let authFailed = false;
+    if (origin !== "upstream") {
+      // Relay/proxy fault — do NOT flip templates to "expired" on this.
+      error = `${origin} error (HTTP ${status}) — infra fault, not account`;
+    } else if (status === 200 && (url.includes("batchexecute") || text.includes("wrb.fr"))) {
       const parsed = parseBatchExecuteResult(text);
-      if (!parsed.accepted && parsed.reason) error = parsed.reason;
+      if (!parsed.accepted && parsed.reason) {
+        error = parsed.reason;
+        // wrb.fr inner code 7 = generic session/token invalid — auth failure.
+        if (parsed.errorCode === 7) authFailed = true;
+      }
     } else if (status >= 400) {
       error = `HTTP ${status}`;
+      if (status === 401 || status === 403) authFailed = true;
     }
     return {
       status,
@@ -534,14 +555,18 @@ export async function fireOnce(
       snippet: text.slice(0, 512),
       error,
       injected,
+      authFailed,
     };
   } catch (err) {
+    const e = err as Error & { origin?: RelayOrigin };
     return {
       status: null,
       latency: Date.now() - started,
       snippet: "",
-      error: (err as Error).message || "network error",
+      error: (e.message || "network error") + (e.origin ? ` [${e.origin}]` : ""),
       injected,
+      // Network/relay throw is not a Google-side auth verdict.
+      authFailed: false,
     };
   }
 }

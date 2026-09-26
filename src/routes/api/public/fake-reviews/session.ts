@@ -79,16 +79,17 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
           return json({ error: "Invalid payload", detail: (err as Error).message }, 400);
         }
 
+        const authuser = parsed.auth_user_index ?? 0;
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
         const { data, error } = await supabaseAdmin
           .from("fake_review_templates")
           .insert({
             label: parsed.label,
             google_email: parsed.google_email ?? null,
-            auth_user_index: parsed.auth_user_index ?? 0,
-            endpoint_url: CANONICAL_ENDPOINT,
+            auth_user_index: authuser,
+            endpoint_url: canonicalEndpointFor(authuser),
             method: "POST",
-            headers_json: buildHeaders(parsed.user_agent),
+            headers_json: buildHeaders(parsed.user_agent, authuser),
             cookie_bundle: parsed.cookie_bundle,
             body_template: buildBodyTemplate(parsed.at_token),
             body_kind: "form",

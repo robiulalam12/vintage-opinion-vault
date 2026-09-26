@@ -280,13 +280,17 @@ async function fetchViaRelay(
 const atTokenCache = new Map<string, { token: string; expires: number }>();
 const AT_TOKEN_TTL = 30 * 60 * 1000;
 
+type MintResult = { ok: true; token: string } | { ok: false; conclusive: boolean; reason: string };
+
 async function mintAtToken(
   template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json" | "auth_user_index">,
   timeoutMs: number,
-): Promise<string | null> {
+): Promise<MintResult> {
   const cached = atTokenCache.get(template.id);
-  if (cached && cached.expires > Date.now()) return cached.token;
-  if (!template.cookie_bundle) return null;
+  if (cached && cached.expires > Date.now()) return { ok: true, token: cached.token };
+  if (!template.cookie_bundle) {
+    return { ok: false, conclusive: true, reason: "no cookie bundle on template" };
+  }
 
   const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   const headers = new Headers();
@@ -299,19 +303,20 @@ async function mintAtToken(
       : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
   );
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
-  // The Google multi-login cookie jar is shared across every signed-in
-  // account; the authuser index is what picks which one this request acts
-  // as. Without it Google mints the SNlM0e token for account 0 (or whichever
-  // account is default), and every replay under this template's cookies then
-  // fails as "session/token invalid" — the exact "expired" symptom users see.
   headers.set("x-goog-authuser", String(authuser));
 
   const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
+
+  let status: number | null = null;
+  let location: string | null = null;
+  let text = "";
+  let origin: RelayOrigin = "upstream";
   try {
-    let text: string;
     if (relayConfigured()) {
       const res = await fetchViaRelay(pageUrl, "GET", headers, undefined, template.id, timeoutMs);
+      status = res.status;
       text = res.text;
+      origin = res.origin;
     } else {
       const res = await fetch(pageUrl, {
         method: "GET",
@@ -319,18 +324,64 @@ async function mintAtToken(
         redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       });
+      status = res.status;
+      location = res.headers.get("location");
       text = await res.text().catch(() => "");
     }
-    const match = text.match(/"SNlM0e":"([^"]+)"/);
-    const token = match?.[1];
-    if (!token) return null; // cookies dead or page changed
-    atTokenCache.set(template.id, { token, expires: Date.now() + AT_TOKEN_TTL });
-    return token;
-  } catch {
-    return null;
+  } catch (err) {
+    const e = err as Error & { origin?: RelayOrigin };
+    console.error(
+      `[mintAtToken] tpl=${template.id} authuser=${authuser} transport error:`,
+      e.message,
+      e.origin ? `[${e.origin}]` : "",
+    );
+    return { ok: false, conclusive: false, reason: `${e.message}${e.origin ? ` [${e.origin}]` : ""}` };
   }
-}
 
+  // Infra fault: relay/proxy refused, not Google.
+  if (origin !== "upstream") {
+    console.error(`[mintAtToken] tpl=${template.id}: ${origin} fault (HTTP ${status})`);
+    return { ok: false, conclusive: false, reason: `${origin} fault HTTP ${status}` };
+  }
+
+  // Redirect to sign-in: cookies conclusively dead.
+  if (status !== null && status >= 300 && status < 400) {
+    const looksSignIn = /ServiceLogin|accounts\.google\.com/i.test(location ?? "");
+    console.error(
+      `[mintAtToken] tpl=${template.id} authuser=${authuser}: HTTP ${status} redirect → ${location ?? "?"}` +
+        (looksSignIn ? " (sign-in redirect: cookies expired)" : ""),
+    );
+    return {
+      ok: false,
+      conclusive: looksSignIn,
+      reason: looksSignIn
+        ? `redirected to sign-in for authuser=${authuser} — cookies expired`
+        : `unexpected redirect → ${location ?? "?"}`,
+    };
+  }
+
+  if (status === 401 || status === 403) {
+    console.error(`[mintAtToken] tpl=${template.id} authuser=${authuser}: HTTP ${status}`);
+    return { ok: false, conclusive: true, reason: `Google HTTP ${status} for authuser=${authuser}` };
+  }
+
+  const match = text.match(/"SNlM0e":"([^"]+)"/);
+  const token = match?.[1];
+  if (!token) {
+    console.error(
+      `[mintAtToken] tpl=${template.id} authuser=${authuser}: no SNlM0e (HTTP ${status ?? "?"}). ` +
+        `HTML preview: ${text.slice(0, 180).replace(/\s+/g, " ")}`,
+    );
+    return {
+      ok: false,
+      conclusive: false,
+      reason: `no SNlM0e token in report page (HTTP ${status ?? "?"}) — wrong authuser index or Google shape change`,
+    };
+  }
+
+  atTokenCache.set(template.id, { token, expires: Date.now() + AT_TOKEN_TTL });
+  return { ok: true, token };
+}
 /**
  * Sign-in probe used by the Templates "Verify" button. Loads the *same*
  * Maps report page the fire path uses, under the *same* authuser slot,

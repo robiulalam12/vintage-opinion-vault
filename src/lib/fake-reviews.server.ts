@@ -219,6 +219,15 @@ export function relayConfigured(): boolean {
  * JSON body {url, method, headers, body, proxyUrl}; it returns the upstream
  * status and body.
  */
+/**
+ * Origin tag on the relay response:
+ *  - "upstream" = Google actually replied with the returned status/body.
+ *  - "relay"    = the relay server itself refused (auth, bad request, etc.).
+ *  - "proxy"    = the residential proxy refused (407 auth, exhausted, etc.).
+ * Callers must only treat "upstream" 401/403 as an expired Google session.
+ */
+export type RelayOrigin = "upstream" | "relay" | "proxy";
+
 async function fetchViaRelay(
   url: string,
   method: string,
@@ -226,7 +235,7 @@ async function fetchViaRelay(
   body: string | undefined,
   templateId: string,
   timeoutMs: number,
-): Promise<{ status: number; text: string }> {
+): Promise<{ status: number; text: string; origin: RelayOrigin }> {
   const relayUrl = process.env["RELAY_URL"]!;
   const relaySecret = process.env["RELAY_SECRET"]!;
   const proxyUrl = proxyUrlForTemplate(templateId);
@@ -247,11 +256,19 @@ async function fetchViaRelay(
     status?: number;
     body?: string;
     error?: string;
+    origin?: string;
   } | null;
   if (!res.ok || !data || typeof data.status !== "number") {
-    throw new Error(data?.error || `relay error ${res.status}`);
+    // Relay-side failure. Tag it so callers do not misfile as Google-side auth loss.
+    const err = new Error(data?.error || `relay error ${res.status}`) as Error & { origin?: RelayOrigin };
+    err.origin = "relay";
+    throw err;
   }
-  return { status: data.status, text: typeof data.body === "string" ? data.body : "" };
+  // Relay may echo "proxy" in `origin` when the proxy refused the request
+  // (407, connection refused). If it doesn't, default to "upstream".
+  const origin: RelayOrigin =
+    data.origin === "proxy" || data.origin === "relay" ? data.origin : "upstream";
+  return { status: data.status, text: typeof data.body === "string" ? data.body : "", origin };
 }
 
 /**

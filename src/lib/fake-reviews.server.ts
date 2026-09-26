@@ -334,18 +334,23 @@ async function mintAtToken(
 }
 
 /**
- * Cheap sign-in probe used by the Templates "Verify" button. Loads Google's
- * report page with the account's own cookies and checks whether it renders
- * a signed-in page (contains SNlM0e token) or redirects/renders sign-in.
- * The batchexecute endpoint returns HTTP 200 even for dead cookies (error
- * lives in the response body as code 7 "generic"), so HTTP status alone is
- * not a reliable signal — this probe is.
+ * Sign-in probe used by the Templates "Verify" button. Loads the *same*
+ * Maps report page the fire path uses, under the *same* authuser slot,
+ * and looks for the "SNlM0e" XSRF token — its presence proves the cookies
+ * authenticate for the Maps report surface (not a different Google surface
+ * like Gmail, whose session validity is not guaranteed to be coextensive).
+ *
+ * Returns `conclusive:false` when we couldn't reach Google (relay/proxy
+ * error, timeout). Callers should NOT flip the template to "expired" on
+ * an inconclusive probe — infra flakiness has been marking good sessions
+ * dead. Mark stale instead and retry.
  */
 export async function probeAccountSignIn(
-  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json">,
+  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json" | "auth_user_index">,
   timeoutMs = 12000,
-): Promise<{ signedIn: boolean; reason: string | null }> {
-  if (!template.cookie_bundle) return { signedIn: false, reason: "no cookie bundle" };
+): Promise<{ signedIn: boolean; reason: string | null; conclusive: boolean }> {
+  if (!template.cookie_bundle) return { signedIn: false, reason: "no cookie bundle", conclusive: true };
+  const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   const headers = new Headers();
   headers.set("cookie", template.cookie_bundle);
   const ua = template.headers_json?.["user-agent"] ?? template.headers_json?.["User-Agent"];
@@ -356,41 +361,55 @@ export async function probeAccountSignIn(
       : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
   );
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
-  // Gmail atom feed is the most reliable sign-in probe: returns XML <feed>
-  // when the account is signed in, or an HTML sign-in page otherwise.
-  // The report page's SNlM0e token appears on the sign-in page too, so we
-  // can't use that as the signal.
-  const pageUrl = "https://mail.google.com/mail/u/0/feed/atom";
+  headers.set("x-goog-authuser", String(authuser));
+
+  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
   try {
     let text = "";
     let status: number | null = null;
+    let origin: RelayOrigin = "upstream";
     if (relayConfigured()) {
       const res = await fetchViaRelay(pageUrl, "GET", headers, undefined, template.id, timeoutMs);
       text = res.text;
       status = res.status;
+      origin = res.origin;
     } else {
       const res = await fetch(pageUrl, {
         method: "GET",
         headers,
-        redirect: "follow",
+        redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       });
       status = res.status;
       text = await res.text().catch(() => "");
     }
-    const head = text.slice(0, 400);
-    if (/<feed\b/i.test(head) || head.trimStart().startsWith("<?xml")) {
-      return { signedIn: true, reason: null };
+    // If we didn't get an "upstream" response, the probe is inconclusive —
+    // that's relay/proxy fault, not Google saying the session is dead.
+    if (origin !== "upstream") {
+      return { signedIn: false, reason: `${origin} error (HTTP ${status})`, conclusive: false };
     }
-    if (/ServiceLogin|accounts\.google\.com\/(signin|ServiceLogin)|Sign in\s*[-–]\s*Google/i.test(text)) {
-      return { signedIn: false, reason: "redirected to sign-in — cookies expired" };
+    // SNlM0e appears on the signed-in report page. Google's sign-in page
+    // also embeds it, so pair its presence with a positive signed-in signal.
+    const hasToken = /"SNlM0e":"([^"]+)"/.test(text);
+    const looksSignedOut = /ServiceLogin|accounts\.google\.com\/(?:signin|ServiceLogin|AccountChooser)/i.test(text);
+    if (hasToken && !looksSignedOut) {
+      return { signedIn: true, reason: null, conclusive: true };
+    }
+    if (looksSignedOut) {
+      return { signedIn: false, reason: `redirected to sign-in for authuser=${authuser} — cookies expired`, conclusive: true };
     }
     if (status === 401 || status === 403) {
-      return { signedIn: false, reason: `unauthorized (HTTP ${status})` };
+      return { signedIn: false, reason: `Google returned HTTP ${status} for authuser=${authuser}`, conclusive: true };
     }
-    return { signedIn: false, reason: `no Gmail feed returned (HTTP ${status ?? "?"})` };
+    // 200 but no token and no sign-in markers: shape changed, or transient.
+    return { signedIn: false, reason: `no SNlM0e token in Maps report page (HTTP ${status ?? "?"})`, conclusive: false };
   } catch (err) {
-    return { signedIn: false, reason: (err as Error).message || "network error" };
+    const e = err as Error & { origin?: RelayOrigin };
+    return {
+      signedIn: false,
+      reason: (e.message || "network error") + (e.origin ? ` [${e.origin}]` : ""),
+      conclusive: false,
+    };
   }
 }
 

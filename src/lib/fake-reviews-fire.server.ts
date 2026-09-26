@@ -126,11 +126,10 @@ export async function fireOrderCore(supabaseAdmin: any, orderId: string, max: nu
         REASON_NAME: String(order.reason_code),
         COMMENT: picked.text,
       });
-      if (
-        res.status === 401 ||
-        res.status === 403 ||
-        (res.error && /session\/token invalid|code 7|cookies likely dead/i.test(res.error))
-      ) {
+      // Only Google-side auth rejection marks a template expired. Relay/proxy
+      // faults (407, timeouts, relay 401) used to flip good sessions dead,
+      // which is why "valid cookies → expired" happened even for one report.
+      if (res.authFailed) {
         expired.add(job.template.id);
       }
       shotRows.push({

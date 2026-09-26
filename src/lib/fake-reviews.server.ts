@@ -219,6 +219,15 @@ export function relayConfigured(): boolean {
  * JSON body {url, method, headers, body, proxyUrl}; it returns the upstream
  * status and body.
  */
+/**
+ * Origin tag on the relay response:
+ *  - "upstream" = Google actually replied with the returned status/body.
+ *  - "relay"    = the relay server itself refused (auth, bad request, etc.).
+ *  - "proxy"    = the residential proxy refused (407 auth, exhausted, etc.).
+ * Callers must only treat "upstream" 401/403 as an expired Google session.
+ */
+export type RelayOrigin = "upstream" | "relay" | "proxy";
+
 async function fetchViaRelay(
   url: string,
   method: string,
@@ -226,7 +235,7 @@ async function fetchViaRelay(
   body: string | undefined,
   templateId: string,
   timeoutMs: number,
-): Promise<{ status: number; text: string }> {
+): Promise<{ status: number; text: string; origin: RelayOrigin }> {
   const relayUrl = process.env["RELAY_URL"]!;
   const relaySecret = process.env["RELAY_SECRET"]!;
   const proxyUrl = proxyUrlForTemplate(templateId);
@@ -247,11 +256,19 @@ async function fetchViaRelay(
     status?: number;
     body?: string;
     error?: string;
+    origin?: string;
   } | null;
   if (!res.ok || !data || typeof data.status !== "number") {
-    throw new Error(data?.error || `relay error ${res.status}`);
+    // Relay-side failure. Tag it so callers do not misfile as Google-side auth loss.
+    const err = new Error(data?.error || `relay error ${res.status}`) as Error & { origin?: RelayOrigin };
+    err.origin = "relay";
+    throw err;
   }
-  return { status: data.status, text: typeof data.body === "string" ? data.body : "" };
+  // Relay may echo "proxy" in `origin` when the proxy refused the request
+  // (407, connection refused). If it doesn't, default to "upstream".
+  const origin: RelayOrigin =
+    data.origin === "proxy" || data.origin === "relay" ? data.origin : "upstream";
+  return { status: data.status, text: typeof data.body === "string" ? data.body : "", origin };
 }
 
 /**
@@ -266,13 +283,14 @@ const atTokenCache = new Map<string, { token: string; expires: number }>();
 const AT_TOKEN_TTL = 30 * 60 * 1000;
 
 async function mintAtToken(
-  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json">,
+  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json" | "auth_user_index">,
   timeoutMs: number,
 ): Promise<string | null> {
   const cached = atTokenCache.get(template.id);
   if (cached && cached.expires > Date.now()) return cached.token;
   if (!template.cookie_bundle) return null;
 
+  const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   const headers = new Headers();
   headers.set("cookie", template.cookie_bundle);
   const ua = template.headers_json?.["user-agent"] ?? template.headers_json?.["User-Agent"];
@@ -283,8 +301,14 @@ async function mintAtToken(
       : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
   );
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
+  // The Google multi-login cookie jar is shared across every signed-in
+  // account; the authuser index is what picks which one this request acts
+  // as. Without it Google mints the SNlM0e token for account 0 (or whichever
+  // account is default), and every replay under this template's cookies then
+  // fails as "session/token invalid" — the exact "expired" symptom users see.
+  headers.set("x-goog-authuser", String(authuser));
 
-  const pageUrl = "https://www.google.com/local/content/rap/report/submit?hl=en";
+  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
   try {
     let text: string;
     if (relayConfigured()) {
@@ -310,18 +334,23 @@ async function mintAtToken(
 }
 
 /**
- * Cheap sign-in probe used by the Templates "Verify" button. Loads Google's
- * report page with the account's own cookies and checks whether it renders
- * a signed-in page (contains SNlM0e token) or redirects/renders sign-in.
- * The batchexecute endpoint returns HTTP 200 even for dead cookies (error
- * lives in the response body as code 7 "generic"), so HTTP status alone is
- * not a reliable signal — this probe is.
+ * Sign-in probe used by the Templates "Verify" button. Loads the *same*
+ * Maps report page the fire path uses, under the *same* authuser slot,
+ * and looks for the "SNlM0e" XSRF token — its presence proves the cookies
+ * authenticate for the Maps report surface (not a different Google surface
+ * like Gmail, whose session validity is not guaranteed to be coextensive).
+ *
+ * Returns `conclusive:false` when we couldn't reach Google (relay/proxy
+ * error, timeout). Callers should NOT flip the template to "expired" on
+ * an inconclusive probe — infra flakiness has been marking good sessions
+ * dead. Mark stale instead and retry.
  */
 export async function probeAccountSignIn(
-  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json">,
+  template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json" | "auth_user_index">,
   timeoutMs = 12000,
-): Promise<{ signedIn: boolean; reason: string | null }> {
-  if (!template.cookie_bundle) return { signedIn: false, reason: "no cookie bundle" };
+): Promise<{ signedIn: boolean; reason: string | null; conclusive: boolean }> {
+  if (!template.cookie_bundle) return { signedIn: false, reason: "no cookie bundle", conclusive: true };
+  const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   const headers = new Headers();
   headers.set("cookie", template.cookie_bundle);
   const ua = template.headers_json?.["user-agent"] ?? template.headers_json?.["User-Agent"];
@@ -332,41 +361,55 @@ export async function probeAccountSignIn(
       : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36",
   );
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
-  // Gmail atom feed is the most reliable sign-in probe: returns XML <feed>
-  // when the account is signed in, or an HTML sign-in page otherwise.
-  // The report page's SNlM0e token appears on the sign-in page too, so we
-  // can't use that as the signal.
-  const pageUrl = "https://mail.google.com/mail/u/0/feed/atom";
+  headers.set("x-goog-authuser", String(authuser));
+
+  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en`;
   try {
     let text = "";
     let status: number | null = null;
+    let origin: RelayOrigin = "upstream";
     if (relayConfigured()) {
       const res = await fetchViaRelay(pageUrl, "GET", headers, undefined, template.id, timeoutMs);
       text = res.text;
       status = res.status;
+      origin = res.origin;
     } else {
       const res = await fetch(pageUrl, {
         method: "GET",
         headers,
-        redirect: "follow",
+        redirect: "manual",
         signal: AbortSignal.timeout(timeoutMs),
       });
       status = res.status;
       text = await res.text().catch(() => "");
     }
-    const head = text.slice(0, 400);
-    if (/<feed\b/i.test(head) || head.trimStart().startsWith("<?xml")) {
-      return { signedIn: true, reason: null };
+    // If we didn't get an "upstream" response, the probe is inconclusive —
+    // that's relay/proxy fault, not Google saying the session is dead.
+    if (origin !== "upstream") {
+      return { signedIn: false, reason: `${origin} error (HTTP ${status})`, conclusive: false };
     }
-    if (/ServiceLogin|accounts\.google\.com\/(signin|ServiceLogin)|Sign in\s*[-–]\s*Google/i.test(text)) {
-      return { signedIn: false, reason: "redirected to sign-in — cookies expired" };
+    // SNlM0e appears on the signed-in report page. Google's sign-in page
+    // also embeds it, so pair its presence with a positive signed-in signal.
+    const hasToken = /"SNlM0e":"([^"]+)"/.test(text);
+    const looksSignedOut = /ServiceLogin|accounts\.google\.com\/(?:signin|ServiceLogin|AccountChooser)/i.test(text);
+    if (hasToken && !looksSignedOut) {
+      return { signedIn: true, reason: null, conclusive: true };
+    }
+    if (looksSignedOut) {
+      return { signedIn: false, reason: `redirected to sign-in for authuser=${authuser} — cookies expired`, conclusive: true };
     }
     if (status === 401 || status === 403) {
-      return { signedIn: false, reason: `unauthorized (HTTP ${status})` };
+      return { signedIn: false, reason: `Google returned HTTP ${status} for authuser=${authuser}`, conclusive: true };
     }
-    return { signedIn: false, reason: `no Gmail feed returned (HTTP ${status ?? "?"})` };
+    // 200 but no token and no sign-in markers: shape changed, or transient.
+    return { signedIn: false, reason: `no SNlM0e token in Maps report page (HTTP ${status ?? "?"})`, conclusive: false };
   } catch (err) {
-    return { signedIn: false, reason: (err as Error).message || "network error" };
+    const e = err as Error & { origin?: RelayOrigin };
+    return {
+      signedIn: false,
+      reason: (e.message || "network error") + (e.origin ? ` [${e.origin}]` : ""),
+      conclusive: false,
+    };
   }
 }
 
@@ -383,10 +426,23 @@ function replaceAtToken(rawBody: string, at: string): string {
   }
 }
 
+/**
+ * Ensures the endpoint URL carries `authuser=<N>` matching the template's
+ * captured slot. Google's multi-login cookie jar is shared across accounts;
+ * without this param the call runs as the default (slot 0) account and
+ * fails with error code 7 for every other slot.
+ */
+function ensureAuthuser(url: string, authuser: number): string {
+  if (/[?&]authuser=/.test(url)) {
+    return url.replace(/([?&]authuser=)\d+/, `$1${authuser}`);
+  }
+  return url + (url.includes("?") ? "&" : "?") + `authuser=${authuser}`;
+}
+
 export async function fireOnce(
   template: Pick<
     TemplateRow,
-    "id" | "endpoint_url" | "method" | "headers_json" | "cookie_bundle" | "body_template" | "body_kind"
+    "id" | "endpoint_url" | "method" | "headers_json" | "cookie_bundle" | "body_template" | "body_kind" | "auth_user_index"
   >,
   vars: {
     REVIEW_ID: string;
@@ -402,9 +458,13 @@ export async function fireOnce(
   snippet: string;
   error: string | null;
   injected: boolean;
+  /** True only when Google itself rejected the caller's session (401/403 upstream, or wrb.fr code 7). */
+  authFailed: boolean;
 }> {
+  const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   let url = interpolate(template.endpoint_url, vars);
   url = rewriteEndpointUrl(url, vars.REVIEW_ID);
+  url = ensureAuthuser(url, authuser);
   const rawHeaders = template.headers_json ?? {};
   const headers = new Headers();
   for (const [k, v] of Object.entries(rawHeaders)) {
@@ -414,6 +474,8 @@ export async function fireOnce(
     headers.set(k, interpolate(v, vars));
   }
   if (template.cookie_bundle) headers.set("cookie", template.cookie_bundle);
+  // Route this request to the correct signed-in account in the shared jar.
+  headers.set("x-goog-authuser", String(authuser));
 
   const method = (template.method || "POST").toUpperCase();
   const init: RequestInit = {
@@ -441,8 +503,9 @@ export async function fireOnce(
           status: null,
           latency: 0,
           snippet: "",
-          error: "could not mint fresh Google token — account cookies likely dead, re-upload cookies",
+          error: `could not mint fresh Google token for authuser=${authuser} — cookies dead for this account, re-upload`,
           injected,
+          authFailed: true,
         };
       }
       body = replaceAtToken(body, freshAt);
@@ -452,23 +515,15 @@ export async function fireOnce(
 
   const started = Date.now();
   try {
-    // Route through the VPS relay + residential proxy when configured, so
-    // each Google account reports from its own sticky USA IP. Falls back to
-    // a direct fetch when the relay isn't set up.
     let status: number;
     let text: string;
+    let origin: RelayOrigin = "upstream";
     if (relayConfigured()) {
       const body = typeof init.body === "string" ? init.body : undefined;
-      const relayRes = await fetchViaRelay(
-        url,
-        method,
-        headers,
-        body,
-        template.id,
-        timeoutMs,
-      );
+      const relayRes = await fetchViaRelay(url, method, headers, body, template.id, timeoutMs);
       status = relayRes.status;
       text = relayRes.text;
+      origin = relayRes.origin;
     } else {
       const res = await fetch(url, init);
       status = res.status;
@@ -479,11 +534,20 @@ export async function fireOnce(
     // the wrb.fr envelope. Parse it so a rejected report is surfaced as an
     // error instead of being logged as a silent success.
     let error: string | null = null;
-    if (status === 200 && (url.includes("batchexecute") || text.includes("wrb.fr"))) {
+    let authFailed = false;
+    if (origin !== "upstream") {
+      // Relay/proxy fault — do NOT flip templates to "expired" on this.
+      error = `${origin} error (HTTP ${status}) — infra fault, not account`;
+    } else if (status === 200 && (url.includes("batchexecute") || text.includes("wrb.fr"))) {
       const parsed = parseBatchExecuteResult(text);
-      if (!parsed.accepted && parsed.reason) error = parsed.reason;
+      if (!parsed.accepted && parsed.reason) {
+        error = parsed.reason;
+        // wrb.fr inner code 7 = generic session/token invalid — auth failure.
+        if (parsed.errorCode === 7) authFailed = true;
+      }
     } else if (status >= 400) {
       error = `HTTP ${status}`;
+      if (status === 401 || status === 403) authFailed = true;
     }
     return {
       status,
@@ -491,14 +555,18 @@ export async function fireOnce(
       snippet: text.slice(0, 512),
       error,
       injected,
+      authFailed,
     };
   } catch (err) {
+    const e = err as Error & { origin?: RelayOrigin };
     return {
       status: null,
       latency: Date.now() - started,
       snippet: "",
-      error: (err as Error).message || "network error",
+      error: (e.message || "network error") + (e.origin ? ` [${e.origin}]` : ""),
       injected,
+      // Network/relay throw is not a Google-side auth verdict.
+      authFailed: false,
     };
   }
 }

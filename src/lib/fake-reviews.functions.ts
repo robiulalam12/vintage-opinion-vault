@@ -821,13 +821,15 @@ export const pauseDrip = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((v: unknown) => z.object({ id: z.string().uuid() }).parse(v))
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { error } = await supabaseAdmin
+    let q = supabaseAdmin
       .from("fake_review_orders")
       .update({ status: "paused", done_at: null })
       .eq("id", data.id)
       .like("status", "drip:%");
+    q = scopeToOwner(q, access.isAdmin, access.userId);
+    const { error } = await q;
     if (error) throw new Error(error.message);
     return { ok: true };
   });

@@ -124,14 +124,6 @@ export async function fireOrderCore(supabaseAdmin: any, orderId: string, max: nu
       });
     });
 
-    for (const [id, n] of commentUsage) {
-      const row = commentPool.find((c) => c.id === id);
-      if (!row) continue;
-      await supabaseAdmin
-        .from("fake_review_comments")
-        .update({ times_used: row.times_used + n })
-        .eq("id", id);
-    }
 
     if (shotRows.length > 0) {
       await supabaseAdmin.from("fake_review_shots").insert(shotRows);

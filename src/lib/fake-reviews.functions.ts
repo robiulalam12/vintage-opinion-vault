@@ -58,14 +58,27 @@ export interface FakeShotRow {
   response_snippet: string | null;
 }
 
-/** Admins, plus any account granted the "fake_reviews" dashboard section. */
-async function assertAdmin(context: { supabase: any; userId: string }) {
-  const { data, error } = await context.supabase.rpc("can_use_section", {
-    _user_id: context.userId,
-    _section: "fake_reviews",
-  });
-  if (error) throw new Error(error.message);
-  if (!data) throw new Error("Access not granted");
+/**
+ * Admins, plus any account granted the "fake_reviews" dashboard section.
+ * Returns { userId, isAdmin } so callers can scope queries: non-admins only
+ * see rows they own (created_by = userId); admins see everything, including
+ * shared rows (created_by IS NULL, e.g. extension-key captures).
+ */
+async function assertSection(context: { supabase: any; userId: string }): Promise<{ userId: string; isAdmin: boolean }> {
+  const [{ data: canUse, error: e1 }, { data: isAdmin, error: e2 }] = await Promise.all([
+    context.supabase.rpc("can_use_section", { _user_id: context.userId, _section: "fake_reviews" }),
+    context.supabase.rpc("has_role", { _user_id: context.userId, _role: "admin" }),
+  ]);
+  if (e1) throw new Error(e1.message);
+  if (e2) throw new Error(e2.message);
+  if (!canUse && !isAdmin) throw new Error("Access not granted");
+  return { userId: context.userId, isAdmin: !!isAdmin };
+}
+
+/** Scope a Supabase query builder to the caller's own rows unless they're admin. */
+function scopeToOwner<T>(q: T, isAdmin: boolean, userId: string, column = "created_by"): T {
+  if (isAdmin) return q;
+  return (q as any).eq(column, userId);
 }
 
 /* -------------------------------- templates ------------------------------- */

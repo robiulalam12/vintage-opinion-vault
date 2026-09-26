@@ -158,10 +158,10 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
         }
 
         const headers = buildHeaders(parsed.user_agent, authuser, {
-          x_client_data: parsed.x_client_data,
-          x_browser_validation: parsed.x_browser_validation,
-          sec_ch_ua: parsed.sec_ch_ua,
-          sec_ch_ua_platform: parsed.sec_ch_ua_platform,
+          x_client_data: parsed.x_client_data ?? null,
+          x_browser_validation: parsed.x_browser_validation ?? null,
+          sec_ch_ua: parsed.sec_ch_ua ?? null,
+          sec_ch_ua_platform: parsed.sec_ch_ua_platform ?? null,
         });
 
         // Probe sign-in against the exact slot we're about to use.

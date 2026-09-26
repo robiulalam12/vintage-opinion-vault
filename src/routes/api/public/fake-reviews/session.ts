@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { checkCaptureExtensionKey, json, preflight, probeAccountSignIn } from "@/lib/fake-reviews.server";
 
-const CAPTURE_EXTENSION_VERSION = "3.2.0";
+const CAPTURE_EXTENSION_VERSION = "3.3.0";
 
 /**
  * Session-only capture. The extension no longer intercepts the full "Report
@@ -13,19 +13,21 @@ const CAPTURE_EXTENSION_VERSION = "3.2.0";
  *   - the `at` XSRF token (SNlM0e) scraped from the Maps HTML
  *   - the user-agent used when the cookies were minted
  *
- * The server materialises a full replayable template using these values
- * so the firehose can inject any {{REVIEW_ID}} / {{REASON}} at fire time.
+ * v3.3.0 additionally captures the *live* URL + attestation headers from the
+ * browser's own Report Review request, because Google now rejects a
+ * reconstructed URL/headers that's missing `bl`, `f.sid`, `_reqid`,
+ * `x-client-data`, or `x-browser-validation`.
  */
 
-// Canonical Google endpoint for the Maps "Report review" submit RPC.
-// rpcids=qVL8Rd + source-path=/local/content/rap/report/submit is what the
-// live Maps UI posts. `authuser=<N>` is baked in per-template so shared
-// cookie jars route the request to the right signed-in account.
-function canonicalEndpointFor(authuser: number): string {
+// Canonical Google endpoint. Used only as a fallback when the extension does
+// not supply a live captured URL. `authuser=<N>` is baked in per-template so
+// shared cookie jars route the request to the right signed-in account.
+function canonicalEndpointFor(authuser: number, hl = "en-GB"): string {
   return (
     "https://www.google.com/_/LocalUserPostsRapUi/data/batchexecute" +
     `?rpcids=qVL8Rd&source-path=%2Flocal%2Fcontent%2Frap%2Freport%2Fsubmit` +
-    `&authuser=${authuser}&hl=en&soc-app=162&soc-platform=1&soc-device=1&rt=c`
+    `&authuser=${authuser}&hl=${encodeURIComponent(hl)}` +
+    `&soc-app=162&soc-platform=1&soc-device=1&rt=c`
   );
 }
 
@@ -40,17 +42,60 @@ function buildBodyTemplate(atToken: string): string {
   return params.toString();
 }
 
-function buildHeaders(userAgent: string, authuser: number): Record<string, string> {
-  return {
+/**
+ * Builds the header set Google expects. If the extension captured the live
+ * request's headers, we forward them verbatim — including the attestation
+ * headers that Google now appears to require:
+ *
+ *   x-client-data         — client variation IDs; missing → generic 400
+ *   x-browser-validation  — signed attestation
+ *   x-browser-channel / x-browser-year / x-browser-copyright
+ *   sec-ch-ua*            — client hints
+ */
+function buildHeaders(
+  userAgent: string,
+  authuser: number,
+  live?: {
+    x_client_data?: string | null;
+    x_browser_validation?: string | null;
+    sec_ch_ua?: string | null;
+    sec_ch_ua_platform?: string | null;
+  },
+): Record<string, string> {
+  const h: Record<string, string> = {
     "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
     "user-agent": userAgent,
     "x-same-domain": "1",
     "x-goog-authuser": String(authuser),
     origin: "https://www.google.com",
-    referer: "https://www.google.com/maps",
+    referer: "https://www.google.com/",
     accept: "*/*",
-    "accept-language": "en-US,en;q=0.9",
+    "accept-language": "en-GB,en-US;q=0.9,en;q=0.8",
   };
+  if (live?.x_client_data) h["x-client-data"] = live.x_client_data;
+  if (live?.x_browser_validation) h["x-browser-validation"] = live.x_browser_validation;
+  if (live?.sec_ch_ua) h["sec-ch-ua"] = live.sec_ch_ua;
+  if (live?.sec_ch_ua_platform) h["sec-ch-ua-platform"] = live.sec_ch_ua_platform;
+  // Browser attestation headers Google's UI always sends; safe defaults when
+  // the extension didn't supply them.
+  h["x-browser-channel"] = "stable";
+  h["x-browser-year"] = String(new Date().getFullYear());
+  h["x-browser-copyright"] = `Copyright ${new Date().getFullYear()} Google LLC. All Rights Reserved.`;
+  return h;
+}
+
+/** Quick check before we bother the probe. */
+function cookieBundleHasAuth(raw: string): { ok: true } | { ok: false; reason: string } {
+  const required = ["SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID"];
+  const lower = raw.toLowerCase();
+  const present = required.filter((n) => lower.includes(n.toLowerCase()));
+  if (present.length === 0) {
+    return {
+      ok: false,
+      reason: `Cookie bundle is missing all of ${required.join(", ")}. Google auth cannot be signed without at least one.`,
+    };
+  }
+  return { ok: true };
 }
 
 const schema = z.object({
@@ -61,20 +106,20 @@ const schema = z.object({
   at_token: z.string().min(10),
   user_agent: z.string().min(10),
   notes: z.string().max(500).optional().nullable(),
-});
 
-function cookieBundleHasAuth(bundle: string): { ok: true } | { ok: false; reason: string } {
-  const names = new Set(
-    bundle
-      .split(";")
-      .map((part) => part.trim().split("=", 1)[0]?.toUpperCase())
-      .filter((name): name is string => Boolean(name)),
-  );
-  if (!["SAPISID", "__SECURE-3PAPISID"].some((name) => names.has(name))) {
-    return { ok: false, reason: "Cookie bundle is missing a Google authentication cookie." };
-  }
-  return { ok: true };
-}
+  // ── v3.3.0 live-capture fields (all optional for backward compat) ───────
+  // When present, these override the reconstructed URL/headers so we send
+  // exactly what the browser sent. This is the fix for the 400/code-4 path.
+  endpoint_url: z.string().url().optional().nullable(),
+  hl: z.string().min(2).max(10).optional().nullable(),
+  f_sid: z.string().optional().nullable(),
+  bl: z.string().optional().nullable(),
+  reqid: z.string().optional().nullable(),
+  x_client_data: z.string().optional().nullable(),
+  x_browser_validation: z.string().optional().nullable(),
+  sec_ch_ua: z.string().optional().nullable(),
+  sec_ch_ua_platform: z.string().optional().nullable(),
+});
 
 export const Route = createFileRoute("/api/public/fake-reviews/session")({
   server: {
@@ -93,21 +138,37 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
         }
 
         const authuser = parsed.auth_user_index ?? 0;
+        const hl = (parsed.hl || "en-GB").trim();
 
-        // Reject obviously-wrong bundles immediately (cheap).
         const cookieCheck = cookieBundleHasAuth(parsed.cookie_bundle);
         if (!cookieCheck.ok) {
           return json({ error: cookieCheck.reason }, 400);
         }
 
-        // Prove the cookies actually authenticate for THIS authuser slot
-        // before we persist. Without this, a dead bundle is stored as
-        // status="fresh" and only fails days later at fire time.
-        const probeId = crypto.randomUUID();
+        // Prefer the live captured URL verbatim; otherwise reconstruct. If we
+        // have f.sid/bl/_reqid but no full URL, splice them into the fallback.
+        let endpointUrl: string;
+        if (parsed.endpoint_url) {
+          endpointUrl = parsed.endpoint_url;
+        } else {
+          endpointUrl = canonicalEndpointFor(authuser, hl);
+          if (parsed.f_sid) endpointUrl += `&f.sid=${encodeURIComponent(parsed.f_sid)}`;
+          if (parsed.bl) endpointUrl += `&bl=${encodeURIComponent(parsed.bl)}`;
+          if (parsed.reqid) endpointUrl += `&_reqid=${encodeURIComponent(parsed.reqid)}`;
+        }
+
+        const headers = buildHeaders(parsed.user_agent, authuser, {
+          x_client_data: parsed.x_client_data,
+          x_browser_validation: parsed.x_browser_validation,
+          sec_ch_ua: parsed.sec_ch_ua,
+          sec_ch_ua_platform: parsed.sec_ch_ua_platform,
+        });
+
+        // Probe sign-in against the exact slot we're about to use.
         const probe = await probeAccountSignIn({
-          id: probeId,
+          id: `probe-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           cookie_bundle: parsed.cookie_bundle,
-          headers_json: buildHeaders(parsed.user_agent, authuser),
+          headers_json: headers,
           auth_user_index: authuser,
         });
 
@@ -116,18 +177,15 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
             {
               error:
                 `Google rejected this session for authuser=${authuser}: ${probe.reason}. ` +
-                `Re-export cookies from the currently-signed-in account, and make sure the authuser index matches (0 = primary, 1/2/… = extras).`,
+                `Re-export cookies from the currently-signed-in account and confirm the authuser index.`,
             },
             422,
           );
         }
 
-        // Inconclusive probes (relay/proxy down, Google HTML shape change)
-        // still get stored — but as "stale" so they don't enter orders as
-        // if they were verified.
         const initialStatus = probe.signedIn ? "fresh" : "stale";
         const probeNote = probe.signedIn
-          ? `verified sign-in at upload (authuser=${authuser})`
+          ? `verified sign-in at upload (authuser=${authuser}, hl=${hl})`
           : `unverified at upload — probe inconclusive: ${probe.reason ?? "unknown"}`;
 
         const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
@@ -137,26 +195,32 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
             label: parsed.label,
             google_email: parsed.google_email ?? null,
             auth_user_index: authuser,
-            endpoint_url: canonicalEndpointFor(authuser),
+            endpoint_url: endpointUrl,
             method: "POST",
-            headers_json: buildHeaders(parsed.user_agent, authuser),
+            headers_json: headers,
             cookie_bundle: parsed.cookie_bundle,
             body_template: buildBodyTemplate(parsed.at_token),
             body_kind: "form",
             status: initialStatus,
             last_verified_at: probe.signedIn ? new Date().toISOString() : null,
             notes:
-              (parsed.notes ? parsed.notes + " — " : "") +
-              `${probeNote}; captured at=${parsed.at_token.slice(0, 6)}…`,
+              (parsed.notes ? parsed.notes + " — " : "") + `${probeNote}; captured at=${parsed.at_token.slice(0, 6)}…`,
           })
           .select("id")
           .single();
         if (error) return json({ error: error.message }, 500);
+
         return json({
           ok: true,
           id: data.id,
           status: initialStatus,
-          probe: { signedIn: probe.signedIn, conclusive: probe.conclusive, reason: probe.reason },
+          probe: {
+            signedIn: probe.signedIn,
+            conclusive: probe.conclusive,
+            reason: probe.reason,
+          },
+          endpoint_url_used: endpointUrl,
+          has_client_data: !!parsed.x_client_data,
         });
       },
     },

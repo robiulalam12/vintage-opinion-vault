@@ -19,11 +19,15 @@ const CAPTURE_EXTENSION_VERSION = "3.2.0";
 
 // Canonical Google endpoint for the Maps "Report review" submit RPC.
 // rpcids=qVL8Rd + source-path=/local/content/rap/report/submit is what the
-// live Maps UI posts. f.sid / bl / _reqid are optional in practice.
-const CANONICAL_ENDPOINT =
-  "https://www.google.com/_/LocalUserPostsRapUi/data/batchexecute" +
-  "?rpcids=qVL8Rd&source-path=%2Flocal%2Fcontent%2Frap%2Freport%2Fsubmit" +
-  "&hl=en&soc-app=162&soc-platform=1&soc-device=1&rt=c";
+// live Maps UI posts. `authuser=<N>` is baked in per-template so shared
+// cookie jars route the request to the right signed-in account.
+function canonicalEndpointFor(authuser: number): string {
+  return (
+    "https://www.google.com/_/LocalUserPostsRapUi/data/batchexecute" +
+    `?rpcids=qVL8Rd&source-path=%2Flocal%2Fcontent%2Frap%2Freport%2Fsubmit` +
+    `&authuser=${authuser}&hl=en&soc-app=162&soc-platform=1&soc-device=1&rt=c`
+  );
+}
 
 // Canonical URL-encoded body. rewriteBatchExecuteBody() in fake-reviews.server
 // mutates inner[3]=REVIEW_ID and inner[7]=REASON at fire time.
@@ -36,11 +40,12 @@ function buildBodyTemplate(atToken: string): string {
   return params.toString();
 }
 
-function buildHeaders(userAgent: string): Record<string, string> {
+function buildHeaders(userAgent: string, authuser: number): Record<string, string> {
   return {
     "content-type": "application/x-www-form-urlencoded;charset=UTF-8",
     "user-agent": userAgent,
     "x-same-domain": "1",
+    "x-goog-authuser": String(authuser),
     "origin": "https://www.google.com",
     "referer": "https://www.google.com/maps",
     "accept": "*/*",

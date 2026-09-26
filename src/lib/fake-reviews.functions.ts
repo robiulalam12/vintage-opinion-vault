@@ -163,8 +163,13 @@ export const verifyTemplate = createServerFn({ method: "POST" })
       id: t.id,
       cookie_bundle: t.cookie_bundle,
       headers_json: (t.headers_json ?? {}) as Record<string, string>,
+      auth_user_index: t.auth_user_index ?? 0,
     });
-    const status = probe.signedIn ? "fresh" : "expired";
+    // Only mark expired when the probe conclusively saw Google reject the
+    // session. Inconclusive results (relay/proxy fault, transient) become
+    // "stale" so a subsequent fire still uses the template — no more good
+    // cookies being nuked because the proxy blinked.
+    const status = probe.signedIn ? "fresh" : probe.conclusive ? "expired" : "stale";
 
     await supabaseAdmin
       .from("fake_review_templates")

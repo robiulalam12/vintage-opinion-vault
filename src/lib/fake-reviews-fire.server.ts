@@ -85,24 +85,8 @@ export async function fireOrderCore(supabaseAdmin: any, orderId: string, max: nu
 
     const reasonNum = String(REASON_CODES[order.reason_code as keyof typeof REASON_CODES] ?? 1);
 
-    // Pool of active comments; one is picked at random per shot to fill
-    // Google's optional inner[6] free-text field instead of leaving it "".
-    let commentQuery = supabaseAdmin
-      .from("fake_review_comments")
-      .select("id,text,times_used")
-      .eq("active", true);
-    const { data: commentRows } = await commentQuery;
-    const commentPool = (commentRows ?? []) as Array<{
-      id: string;
-      text: string;
-      times_used: number;
-    }>;
-    const pickComment = (): { id: string | null; text: string } => {
-      if (commentPool.length === 0) return { id: null, text: "" };
-      const row = commentPool[Math.floor(Math.random() * commentPool.length)]!;
-      return { id: row.id, text: row.text };
-    };
-    const commentUsage = new Map<string, number>();
+    // Google's optional inner[6] free-text field is always sent empty — a
+    // real manual report leaves it blank.
 
     const shotRows: Array<{
       order_id: string;

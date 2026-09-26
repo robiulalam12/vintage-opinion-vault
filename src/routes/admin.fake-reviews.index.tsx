@@ -88,14 +88,14 @@ function FakeReviewsPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6 lg:px-8">
-      <header className="flex items-start justify-between gap-4">
-        <div>
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="min-w-0">
           <h1 className="font-display text-2xl font-bold text-foreground">Fake reviews firehose</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Capture Google sessions with the extension, then replay reports against target reviews.
           </p>
         </div>
-        <Button asChild variant="outline">
+        <Button asChild variant="outline" className="shrink-0">
           <a href="/pob-capture-extension-v3.2.0.zip" download>
             Download capture extension v3.2.0
           </a>
@@ -186,12 +186,12 @@ function TemplatesTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="min-w-0 text-sm text-muted-foreground">
           Add extra Google accounts by uploading their cookies.txt — endpoint, headers, and body reuse an existing
           captured template.
         </p>
-        <div className="flex gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2">
           <AddTemplateDialog />
           <BulkUploadDialog />
           <BulkRemoveDialog rows={rows} />
@@ -204,7 +204,7 @@ function TemplatesTab() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[880px] text-sm">
             <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Label</th>
@@ -228,12 +228,14 @@ function TemplatesTab() {
                       <span className="text-muted-foreground">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-muted-foreground">{r.google_email ?? "—"}</td>
+                  <td className="max-w-[200px] truncate px-3 py-2 text-muted-foreground">{r.google_email ?? "—"}</td>
                   <td className="px-3 py-2">
                     <StatusBadge status={r.status} />
                   </td>
                   <td className="px-3 py-2">{r.shots_fired}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{new Date(r.captured_at).toLocaleString()}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-muted-foreground">
+                    {new Date(r.captured_at).toLocaleString()}
+                  </td>
                   <td className="px-3 py-2 max-w-[220px] truncate text-xs text-red-600">{r.last_error ?? ""}</td>
                   <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
                     <Button
@@ -776,11 +778,13 @@ function OrdersTab() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="min-w-0 text-sm text-muted-foreground">
           Each order fires N reports per template against one Google review.
         </p>
-        <NewOrderDialog onCreated={() => qc.invalidateQueries({ queryKey: ["fr-orders"] })} />
+        <div className="shrink-0">
+          <NewOrderDialog onCreated={() => qc.invalidateQueries({ queryKey: ["fr-orders"] })} />
+        </div>
       </div>
 
       {q.isLoading ? (
@@ -791,7 +795,7 @@ function OrdersTab() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-muted/50 text-left text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
                 <th className="px-3 py-2">Order</th>
@@ -824,7 +828,9 @@ function OrdersTab() {
                     <span className="text-red-600">{o.shots_err} err</span>
                     <span className="ml-1 text-muted-foreground">/ {o.template_ids.length * o.shots_per_template}</span>
                   </td>
-                  <td className="px-3 py-2 text-xs text-muted-foreground">{new Date(o.created_at).toLocaleString()}</td>
+                  <td className="whitespace-nowrap px-3 py-2 text-xs text-muted-foreground">
+                    {new Date(o.created_at).toLocaleString()}
+                  </td>
                   <td className="px-3 py-2 text-right space-x-1 whitespace-nowrap">
                     <Button asChild size="sm" variant="outline">
                       <Link to="/admin/fake-reviews/$orderId" params={{ orderId: o.id }}>

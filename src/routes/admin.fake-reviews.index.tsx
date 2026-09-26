@@ -356,7 +356,10 @@ function AddTemplateDialog() {
             <div>
               <Label>authuser index</Label>
               <Input type="number" min={0} max={9} value={authuser} onChange={(e) => setAuthuser(e.target.value)} />
-              <p className="mt-1 text-xs text-muted-foreground">0 for the primary account, 1/2/… for extras.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                0 = the primary Google account in this cookie jar, 1/2/… = extras. Getting this wrong is the #1 cause of
+                "session/token invalid" at fire time — Google routes the request to the wrong signed-in account.
+              </p>
             </div>
             <div>
               <Label>Notes (optional)</Label>
@@ -499,7 +502,10 @@ function BulkUploadDialog() {
             <div>
               <Label>authuser index</Label>
               <Input type="number" min={0} max={9} value={authuser} onChange={(e) => setAuthuser(e.target.value)} />
-              <p className="mt-1 text-xs text-muted-foreground">0 for the primary account, 1/2/… for extras.</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                0 = the primary Google account in this cookie jar, 1/2/… = extras. Getting this wrong is the #1 cause of
+                "session/token invalid" at fire time — Google routes the request to the wrong signed-in account.
+              </p>
             </div>
             <div>
               <Label>Email prefix (optional)</Label>

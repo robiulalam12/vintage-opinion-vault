@@ -570,18 +570,6 @@ export const createOrder = createServerFn({ method: "POST" })
           "SPAM",
           "CONFLICT",
         ]),
-        comment_tag: z
-          .enum([
-            "policy_violation",
-            "pii",
-            "phone_leak",
-            "cyberbullying",
-            "doxxing",
-            "extortion",
-            "competitor_attack",
-          ])
-          .nullable()
-          .optional(),
         shots_per_template: z.number().int().min(1).max(500),
         template_ids: z.array(z.string().uuid()).min(1).max(5000),
         note: z.string().max(500).optional().default(""),
@@ -622,7 +610,6 @@ export const createOrder = createServerFn({ method: "POST" })
         feature_id: featureId,
         review_id: reviewId,
         reason_code: data.reason_code,
-        comment_tag: data.comment_tag ?? null,
         shots_per_template: data.shots_per_template,
         template_ids: data.template_ids,
         note: data.note || null,

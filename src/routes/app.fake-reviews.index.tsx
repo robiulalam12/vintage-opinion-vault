@@ -62,16 +62,6 @@ const REASONS = [
   { key: "NOT_HELPFUL", label: "Not helpful" },
 ] as const;
 
-const COMMENT_TAGS = [
-  { key: "", label: "Any comment" },
-  { key: "policy_violation", label: "Policy violation" },
-  { key: "pii", label: "PII" },
-  { key: "phone_leak", label: "Phone leak" },
-  { key: "cyberbullying", label: "Cyberbullying" },
-  { key: "doxxing", label: "Doxxing" },
-  { key: "extortion", label: "Extortion" },
-  { key: "competitor_attack", label: "Competitor attack" },
-] as const;
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -288,7 +278,6 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [url, setUrl] = useState("");
   const [reason, setReason] = useState<(typeof REASONS)[number]["key"]>("HARMFUL");
-  const [tag, setTag] = useState<string>("");
   const [shots, setShots] = useState(100);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [selTags, setSelTags] = useState<Set<string>>(new Set());
@@ -308,7 +297,6 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
           name,
           target_url: url,
           reason_code: reason,
-          comment_tag: tag && tag !== "__any" ? (tag as any) : null,
           shots_per_template: shots,
           template_ids: Array.from(selected),
           note: "",
@@ -370,37 +358,8 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
               placeholder="https://www.google.com/maps/…/data=!…!2m5!1s…"
             />
           </div>
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <Label>Reason</Label>
-              <Select value={reason} onValueChange={(v) => setReason(v as any)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {REASONS.map((r) => (
-                    <SelectItem key={r.key} value={r.key}>
-                      {r.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <Label>Comment tag</Label>
-              <Select value={tag} onValueChange={setTag}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Any" />
-                </SelectTrigger>
-                <SelectContent>
-                  {COMMENT_TAGS.map((t) => (
-                    <SelectItem key={t.key || "any"} value={t.key || "__any"}>
-                      {t.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+          <div className="grid grid-cols-2 gap-3">
+...
             <div>
               <Label>Shots per account</Label>
               <Input

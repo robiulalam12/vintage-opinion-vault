@@ -795,21 +795,24 @@ export const startDrip = createServerFn({ method: "POST" })
       .parse(v),
   )
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: order, error } = await supabaseAdmin
+    let selQ = supabaseAdmin
       .from("fake_review_orders")
       .select("status,fired_at")
-      .eq("id", data.id)
-      .maybeSingle();
+      .eq("id", data.id);
+    selQ = scopeToOwner(selQ, access.isAdmin, access.userId);
+    const { data: order, error } = await selQ.maybeSingle();
     if (error) throw new Error(error.message);
     if (!order) throw new Error("Order not found");
     if (order.status === "done" || order.status === "cancelled") throw new Error(`Order is ${order.status}`);
     const now = new Date().toISOString();
-    const { error: upErr } = await supabaseAdmin
+    let upQ = supabaseAdmin
       .from("fake_review_orders")
       .update({ status: `drip:${data.min_sec}:${data.max_sec}`, done_at: now, fired_at: order.fired_at ?? now })
       .eq("id", data.id);
+    upQ = scopeToOwner(upQ, access.isAdmin, access.userId);
+    const { error: upErr } = await upQ;
     if (upErr) throw new Error(upErr.message);
     return { ok: true };
   });

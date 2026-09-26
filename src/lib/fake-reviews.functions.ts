@@ -203,7 +203,7 @@ export const verifyTemplate = createServerFn({ method: "POST" })
       })
       .eq("id", t.id);
 
-    return { ok: true, status, http_status: null, latency_ms: Date.now() - started };
+    return { ok: true, status, reason: probe.signedIn ? null : probe.reason, http_status: null, latency_ms: Date.now() - started };
   });
 
 /**

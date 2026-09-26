@@ -59,7 +59,6 @@ const REASONS = [
   { key: "NOT_HELPFUL", label: "Not helpful" },
 ] as const;
 
-
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
     fresh: "bg-emerald-100 text-emerald-800",
@@ -606,10 +605,26 @@ function BulkRemoveDialog({ rows }: { rows: FakeTemplateSummary[] }) {
   const m = useMutation({
     mutationFn: () => deleteFn({ data: { ids: selectedIds } }),
     onSuccess: (r) => {
-      toast.success(`Deleted ${r.deleted} template${r.deleted === 1 ? "" : "s"}.`);
+      const signedIn = (r as { probe?: { signedIn?: boolean; reason?: string | null } }).probe?.signedIn;
+      const status = (r as { status?: string }).status;
+      const reason = (r as { probe?: { reason?: string | null } }).probe?.reason;
+      if (signedIn) {
+        toast.success("Template added and verified against Google (authuser OK).");
+      } else if (status === "stale") {
+        toast.warning(
+          `Template saved as "stale" — Google check was inconclusive: ${reason ?? "unknown"}. ` +
+            `Use Verify in the templates table to retry.`,
+        );
+      } else {
+        toast.success(`Template added (${r.cookies_parsed} cookies).`);
+      }
       qc.invalidateQueries({ queryKey: ["fr-templates"] });
       setOpen(false);
-      setSelected({});
+      setLabel("");
+      setEmail("");
+      setAuthuser("0");
+      setCookieText("");
+      setNotes("");
     },
     onError: (e: Error) => toast.error(e.message),
   });
@@ -929,7 +944,7 @@ function NewOrderDialog({ onCreated }: { onCreated: () => void }) {
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
-...
+            ...
             <div>
               <Label>Shots per template</Label>
               <Input

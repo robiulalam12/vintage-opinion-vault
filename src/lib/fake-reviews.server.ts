@@ -32,16 +32,20 @@ export type TemplateRow = {
 /**
  * Reason code → Google's numeric enum in the qVL8Rd batchexecute submit body.
  *
- * Confirmed from real captures supplied by the user:
- *   HARMFUL = 5
- *   DISCRIMINATION = 7
+ * CONFIRMED 2026-09-26 from a live manual capture: the reason the Maps UI was
+ * set to when the request was captured serialises to `10`. The other values
+ * below are best-effort and may be stale — Google has renumbered before.
  *
- * BULLYING = 6 is the best-effort value between the two confirmed codes,
- * matching the UI order. LOW_QUALITY, PROFANITY, PERSONAL and NOT_HELPFUL
- * remain unconfirmed; verify with a fresh capture if a specific reason stops
- * producing the expected Google response.
+ * When an order fires with a code Google no longer recognises, the wrb.fr
+ * envelope comes back as `[["er",null,null,null,null,400,...]]` with inner
+ * `["e",4,...]` — "invalid argument". That is the symptom of a stale enum,
+ * NOT of dead cookies. Re-capture each reason and update this table.
  */
 export const REASON_CODES = {
+  // Confirmed from a 2026-09-26 live capture.
+  INAPPROPRIATE: 10,
+
+  // Best-effort; verify with a fresh capture per reason.
   LOW_QUALITY: 1,
   PROFANITY: 2,
   HARMFUL: 5,
@@ -49,6 +53,7 @@ export const REASON_CODES = {
   DISCRIMINATION: 7,
   PERSONAL: 8,
   NOT_HELPFUL: 9,
+
   // Legacy aliases kept so old orders still resolve to a sensible number.
   OFF_TOPIC: 1,
   SPAM: 1,
@@ -97,9 +102,6 @@ export function rewriteBatchExecuteBody(
     const freq = params.get("f.req");
     if (!freq) return rawBody;
     const outer = JSON.parse(freq);
-    // Google wraps calls as either [[[rpcid, innerJsonString, null, "generic"]]]
-    // (multi-call batch) or [[rpcid, innerJsonString, null, "generic"]] (single).
-    // Accept both shapes so a slightly-different capture still gets injected.
     let call: unknown[] | null = null;
     if (Array.isArray(outer?.[0]?.[0]) && typeof outer[0][0][1] === "string") {
       call = outer[0][0];
@@ -109,9 +111,6 @@ export function rewriteBatchExecuteBody(
     if (!call) return rawBody;
     const inner = JSON.parse(call[1] as string);
     if (!Array.isArray(inner)) return rawBody;
-    // Pad shorter captures so index writes never fall off the end. Real
-    // captures have been seen with 6, 7, and 8 fields depending on Google's
-    // rollout — pad to 8 with nulls, then write the known offsets.
     while (inner.length < 8) inner.push(null);
     inner[3] = reviewId;
     inner[6] = comment ?? "";
@@ -142,37 +141,48 @@ export function parseBatchExecuteResult(raw: string): {
   reason: string | null;
 } {
   if (!raw) return { accepted: false, errorCode: null, reason: "empty response" };
-  // Google prefixes the JSON with the anti-hijack ")]}'" line, then sends
-  // length-prefixed JSON arrays, one per line:
-  //
-  //   )]}'
-  //   107
-  //   [["wrb.fr","qVL8Rd","[]",null,null,null,"generic"],["di",601],...]
-  //   25
-  //   [["e",4,null,null,143]]
-  //
-  // The trailing ["e",4,...] frame appears on SUCCESSFUL reports too — it is
-  // not an error. Parse each array line independently and only look at
-  // wrb.fr / er frames.
   const body = raw.replace(/^\)\]\}'\s*/, "").trim();
   try {
-    const frames: unknown[] = [];
-    for (const line of body.split("\n")) {
-      const t = line.trim();
-      if (!t.startsWith("[")) continue;
-      try {
-        const parsed = JSON.parse(t);
-        if (Array.isArray(parsed)) frames.push(...parsed);
-      } catch {
-        // skip partial/length lines
-      }
-    }
-    if (frames.length === 0) return { accepted: false, errorCode: null, reason: "no envelope" };
-    for (const frame of frames) {
+    const jsonStart = body.indexOf("[");
+    if (jsonStart < 0) return { accepted: false, errorCode: null, reason: "no envelope" };
+    const parsed = JSON.parse(body.slice(jsonStart));
+    if (!Array.isArray(parsed)) return { accepted: false, errorCode: null, reason: "bad envelope" };
+    for (const frame of parsed) {
       if (!Array.isArray(frame)) continue;
       if (frame[0] === "er") {
-        const code = typeof frame[5] === "number" ? frame[5] : null;
-        return { accepted: false, errorCode: code, reason: `Google error frame (code ${code ?? "?"})` };
+        // The outer `er` frame carries the HTTP-level code in index 5. The
+        // inner payload is [type, code, ...] — e.g. ["e",4,...] means the
+        // request reached Google but the JSON body was rejected as invalid.
+        // Common inner codes:
+        //   4  = INVALID_ARGUMENT (bad body payload — usually stale enum or
+        //        wrong REVIEW_ID format)
+        //   7  = PERMISSION_DENIED (dead session / auth)
+        let innerCode: number | null = null;
+        let innerType: string | null = null;
+        if (typeof frame[2] === "string") {
+          try {
+            const innerPayload = JSON.parse(frame[2]);
+            if (Array.isArray(innerPayload)) {
+              if (typeof innerPayload[0] === "string") innerType = innerPayload[0];
+              if (typeof innerPayload[1] === "number") innerCode = innerPayload[1];
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+        const outerCode = typeof frame[5] === "number" ? frame[5] : null;
+        const displayCode = innerCode ?? outerCode;
+        const detail =
+          innerType === "e" && innerCode === 4
+            ? "invalid argument (body payload rejected — check reason enum + review id format)"
+            : innerType === "e" && innerCode === 7
+              ? "session/token invalid"
+              : `code ${displayCode ?? "?"}`;
+        return {
+          accepted: false,
+          errorCode: displayCode,
+          reason: `Google rejected report (HTTP ${outerCode ?? "?"}; inner ${innerType ?? "?"}/${innerCode ?? "?"} — ${detail})`,
+        };
       }
       if (frame[0] === "wrb.fr" && typeof frame[2] === "string") {
         const inner = JSON.parse(frame[2]);
@@ -183,7 +193,6 @@ export function parseBatchExecuteResult(raw: string): {
             reason: `Google rejected report (code ${inner[0]}${inner[0] === 7 ? " — session/token invalid" : ""})`,
           };
         }
-        // Accept: payload is null / [] / [null, ...] / [1, ...]
         return { accepted: true, errorCode: null, reason: null };
       }
     }
@@ -195,14 +204,9 @@ export function parseBatchExecuteResult(raw: string): {
 
 /** Also rewrites the review id if it appears literally in the endpoint URL. */
 export function rewriteEndpointUrl(url: string, reviewId: string): string {
-  // Endpoint carries `postId=<REVIEW_ID>` on the legacy path — swap it too.
   return url.replace(/([?&]postId=)[^&]+/g, `$1${encodeURIComponent(reviewId)}`);
 }
 
-/**
- * Replays one captured template once. Returns HTTP status, latency, and a
- * short response snippet. Network errors are captured as `error`.
- */
 /**
  * Builds the DataImpulse proxy URL for one template. `__cr.us` pins USA
  * exits; `;sid.<hash>` makes the IP sticky per Google account so the same
@@ -220,8 +224,6 @@ export function proxyUrlForTemplate(templateId: string): string | null {
     hash = (hash * 31 + templateId.charCodeAt(i)) >>> 0;
   }
   const sid = hash.toString(36);
-  // DataImpulse sticky-session format verified live: `sessid.<tag>` holds the
-  // same exit IP across requests; `sid.` / `session.` do NOT stick.
   return `http://${user}__cr-${country};sessid.${sid}:${pass}@${host}:${port}`;
 }
 
@@ -230,12 +232,6 @@ export function relayConfigured(): boolean {
   return !!(process.env["RELAY_URL"] && process.env["RELAY_SECRET"]);
 }
 
-/**
- * Sends one request through the VPS relay (which exits via the per-template
- * residential proxy). The relay speaks: POST /forward with Bearer auth and a
- * JSON body {url, method, headers, body, proxyUrl}; it returns the upstream
- * status and body.
- */
 /**
  * Origin tag on the relay response:
  *  - "upstream" = Google actually replied with the returned status/body.
@@ -267,7 +263,7 @@ async function fetchViaRelay(
       authorization: `Bearer ${relaySecret}`,
     },
     body: JSON.stringify({ url, method, headers: headerObj, body: body ?? null, proxyUrl }),
-    signal: AbortSignal.timeout(timeoutMs + 15000), // relay adds proxy latency
+    signal: AbortSignal.timeout(timeoutMs + 15000),
   });
   const data = (await res.json().catch(() => null)) as {
     status?: number;
@@ -276,25 +272,45 @@ async function fetchViaRelay(
     origin?: string;
   } | null;
   if (!res.ok || !data || typeof data.status !== "number") {
-    // Relay-side failure. Tag it so callers do not misfile as Google-side auth loss.
-    const err = new Error(data?.error || `relay error ${res.status}`) as Error & { origin?: RelayOrigin };
+    const err = new Error(data?.error || `relay error ${res.status}`) as Error & {
+      origin?: RelayOrigin;
+    };
     err.origin = "relay";
     throw err;
   }
-  // Relay may echo "proxy" in `origin` when the proxy refused the request
-  // (407, connection refused). If it doesn't, default to "upstream".
   const origin: RelayOrigin = data.origin === "proxy" || data.origin === "relay" ? data.origin : "upstream";
-  return { status: data.status, text: typeof data.body === "string" ? data.body : "", origin };
+  return {
+    status: data.status,
+    text: typeof data.body === "string" ? data.body : "",
+    origin,
+  };
 }
 
-/**
+/* ----------------------------------------------------------------------------
+ * Cookie / SAPISID helpers (used by mintAtToken and probeAccountSignIn)
+ * -------------------------------------------------------------------------- */
+
+function extractCookie(bundle: string, name: string): string | null {
+  const re = new RegExp(`(?:^|;\\s*)${name.replace(/-/g, "\\-")}=([^;]+)`);
+  const m = bundle.match(re);
+  return m ? m[1] : null;
+}
+
+/* ----------------------------------------------------------------------------
+ * at= XSRF token minting + cache
+ *
  * The `at=` XSRF token in a captured batchexecute body is bound to the Google
  * session that created it. Replaying it with a different account's cookies
  * makes Google reject the call with error code 7 ("generic") — which is why
  * every replay of the shared captured token failed. Fix: before each shot,
  * load the report page with THIS template's own cookies and mint a fresh
  * token from the page's "SNlM0e" value. Cached 30 min per template.
- */
+ *
+ * A return of `conclusive: false` means we couldn't reach Google at all
+ * (relay/proxy fault, timeout). Callers must NOT mark the template as
+ * expired in that case — infra flakiness has been marking good sessions dead.
+ * -------------------------------------------------------------------------- */
+
 const atTokenCache = new Map<string, { token: string; expires: number }>();
 const AT_TOKEN_TTL = 30 * 60 * 1000;
 
@@ -323,10 +339,7 @@ async function mintAtToken(
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
   headers.set("x-goog-authuser", String(authuser));
 
-  // Maps home reliably embeds SNlM0e when signed in. The report/submit page
-  // requires a review-specific payload and 400s / redirects to signin without
-  // one, so it's useless for minting a fresh token in isolation.
-  const pageUrl = `https://www.google.com/maps?authuser=${authuser}&hl=en`;
+  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en-GB`;
 
   let status: number | null = null;
   let location: string | null = null;
@@ -356,16 +369,18 @@ async function mintAtToken(
       e.message,
       e.origin ? `[${e.origin}]` : "",
     );
-    return { ok: false, conclusive: false, reason: `${e.message}${e.origin ? ` [${e.origin}]` : ""}` };
+    return {
+      ok: false,
+      conclusive: false,
+      reason: `${e.message}${e.origin ? ` [${e.origin}]` : ""}`,
+    };
   }
 
-  // Infra fault: relay/proxy refused, not Google.
   if (origin !== "upstream") {
     console.error(`[mintAtToken] tpl=${template.id}: ${origin} fault (HTTP ${status})`);
     return { ok: false, conclusive: false, reason: `${origin} fault HTTP ${status}` };
   }
 
-  // Redirect to sign-in: cookies conclusively dead.
   if (status !== null && status >= 300 && status < 400) {
     const looksSignIn = /ServiceLogin|accounts\.google\.com/i.test(location ?? "");
     console.error(
@@ -383,7 +398,11 @@ async function mintAtToken(
 
   if (status === 401 || status === 403) {
     console.error(`[mintAtToken] tpl=${template.id} authuser=${authuser}: HTTP ${status}`);
-    return { ok: false, conclusive: true, reason: `Google HTTP ${status} for authuser=${authuser}` };
+    return {
+      ok: false,
+      conclusive: true,
+      reason: `Google HTTP ${status} for authuser=${authuser}`,
+    };
   }
 
   const match = text.match(/"SNlM0e":"([^"]+)"/);
@@ -403,23 +422,24 @@ async function mintAtToken(
   atTokenCache.set(template.id, { token, expires: Date.now() + AT_TOKEN_TTL });
   return { ok: true, token };
 }
+
 /**
- * Sign-in probe used by the Templates "Verify" button. Loads the *same*
- * Maps report page the fire path uses, under the *same* authuser slot,
- * and looks for the "SNlM0e" XSRF token — its presence proves the cookies
- * authenticate for the Maps report surface (not a different Google surface
- * like Gmail, whose session validity is not guaranteed to be coextensive).
+ * Sign-in probe used by the Templates "Verify" button and by the upload
+ * endpoint. Loads the *same* Maps report page the fire path uses, under the
+ * *same* authuser slot, and looks for the "SNlM0e" XSRF token — its presence
+ * proves the cookies authenticate for the Maps report surface.
  *
  * Returns `conclusive:false` when we couldn't reach Google (relay/proxy
- * error, timeout). Callers should NOT flip the template to "expired" on
- * an inconclusive probe — infra flakiness has been marking good sessions
- * dead. Mark stale instead and retry.
+ * error, timeout). Callers must NOT flip the template to "expired" on an
+ * inconclusive probe.
  */
 export async function probeAccountSignIn(
   template: Pick<TemplateRow, "id" | "cookie_bundle" | "headers_json" | "auth_user_index">,
   timeoutMs = 12000,
 ): Promise<{ signedIn: boolean; reason: string | null; conclusive: boolean }> {
-  if (!template.cookie_bundle) return { signedIn: false, reason: "no cookie bundle", conclusive: true };
+  if (!template.cookie_bundle) {
+    return { signedIn: false, reason: "no cookie bundle", conclusive: true };
+  }
   const authuser = Number.isFinite(template.auth_user_index) ? template.auth_user_index : 0;
   const headers = new Headers();
   headers.set("cookie", template.cookie_bundle);
@@ -433,9 +453,7 @@ export async function probeAccountSignIn(
   headers.set("accept-language", "en-GB,en-US;q=0.9,en;q=0.8");
   headers.set("x-goog-authuser", String(authuser));
 
-  // Same reasoning as mintAtToken: probe Maps home, not the report/submit
-  // page (which 400s / bounces to signin without a review-specific payload).
-  const pageUrl = `https://www.google.com/maps?authuser=${authuser}&hl=en`;
+  const pageUrl = `https://www.google.com/local/content/rap/report/submit?authuser=${authuser}&hl=en-GB`;
   try {
     let text = "";
     let status: number | null = null;
@@ -455,20 +473,11 @@ export async function probeAccountSignIn(
       status = res.status;
       text = await res.text().catch(() => "");
     }
-    // If we didn't get an "upstream" response, the probe is inconclusive —
-    // that's relay/proxy fault, not Google saying the session is dead.
     if (origin !== "upstream") {
       return { signedIn: false, reason: `${origin} error (HTTP ${status})`, conclusive: false };
     }
-    // SNlM0e appears on the signed-in report page. Google's sign-in page
-    // also embeds it, so pair its presence with a positive signed-in signal.
     const hasToken = /"SNlM0e":"([^"]+)"/.test(text);
-    // A signed-out response replaces the whole document with Google's sign-in
-    // shell whose <base href> points at accounts.google.com/v3/signin. Don't
-    // match on any "ServiceLogin" substring — the signed-in Maps page still
-    // links to it from the account switcher and other UI, so that regex was
-    // false-flagging good sessions as expired.
-    const looksSignedOut = /<base[^>]+href="https:\/\/accounts\.google\.com\/v3\/signin/i.test(text);
+    const looksSignedOut = /ServiceLogin|accounts\.google\.com\/(?:signin|ServiceLogin|AccountChooser)/i.test(text);
     if (hasToken && !looksSignedOut) {
       return { signedIn: true, reason: null, conclusive: true };
     }
@@ -480,9 +489,12 @@ export async function probeAccountSignIn(
       };
     }
     if (status === 401 || status === 403) {
-      return { signedIn: false, reason: `Google returned HTTP ${status} for authuser=${authuser}`, conclusive: true };
+      return {
+        signedIn: false,
+        reason: `Google returned HTTP ${status} for authuser=${authuser}`,
+        conclusive: true,
+      };
     }
-    // 200 but no token and no sign-in markers: shape changed, or transient.
     return {
       signedIn: false,
       reason: `no SNlM0e token in Maps report page (HTTP ${status ?? "?"})`,
@@ -497,6 +509,10 @@ export async function probeAccountSignIn(
     };
   }
 }
+
+/* ----------------------------------------------------------------------------
+ * Body token replacement
+ * -------------------------------------------------------------------------- */
 
 /** Swaps the `at` parameter inside a URL-encoded batchexecute body. */
 function replaceAtToken(rawBody: string, at: string): string {
@@ -524,6 +540,20 @@ function ensureAuthuser(url: string, authuser: number): string {
   }
   return url + (url.includes("?") ? "&" : "?") + `authuser=${authuser}`;
 }
+
+/**
+ * Heuristic: Google's real `postId` values in the qVL8Rd body are base64-
+ * encoded protobufs that start with the `Ci` prefix (field 1 varint). If a
+ * caller passes a plain numeric postId or a name slug, Google returns
+ * `["e",4,...]` — "invalid argument" — even though auth is fine.
+ */
+function looksLikeProtobufReviewId(id: string): boolean {
+  return /^Ci[A-Za-z0-9+/=]{20,}$/.test(id);
+}
+
+/* ----------------------------------------------------------------------------
+ * fireOnce
+ * -------------------------------------------------------------------------- */
 
 export async function fireOnce(
   template: Pick<
@@ -558,16 +588,19 @@ export async function fireOnce(
   let url = interpolate(template.endpoint_url, vars);
   url = rewriteEndpointUrl(url, vars.REVIEW_ID);
   url = ensureAuthuser(url, authuser);
+
   const rawHeaders = template.headers_json ?? {};
   const headers = new Headers();
   for (const [k, v] of Object.entries(rawHeaders)) {
     if (typeof v !== "string") continue;
     const key = k.toLowerCase();
+    // Only strip headers that break a server-side fetch. Everything else —
+    // including x-client-data, x-browser-validation, sec-ch-ua-*, x-same-domain,
+    // origin, referer — is replayed verbatim from the captured request.
     if (["host", "content-length", "connection", "accept-encoding"].includes(key)) continue;
     headers.set(k, interpolate(v, vars));
   }
   if (template.cookie_bundle) headers.set("cookie", template.cookie_bundle);
-  // Route this request to the correct signed-in account in the shared jar.
   headers.set("x-goog-authuser", String(authuser));
 
   const method = (template.method || "POST").toUpperCase();
@@ -587,13 +620,13 @@ export async function fireOnce(
       if (rewritten !== body) injected = true;
       body = rewritten;
     }
-    // Always mint a fresh per-account token — do NOT gate on body.includes("at=").
-    // If a template ever lacks the param, replaceAtToken() will insert it via .set().
+    // Always mint a fresh per-account token. Do NOT gate on body.includes("at=").
     if (body) {
       const mint = await mintAtToken(template, timeoutMs);
       if (!mint.ok) {
         console.error(
-          `[fireOnce] tpl=${template.id} authuser=${authuser}: mint failed (conclusive=${mint.conclusive}) — ${mint.reason}`,
+          `[fireOnce] tpl=${template.id} authuser=${authuser}: mint failed ` +
+            `(conclusive=${mint.conclusive}) — ${mint.reason}`,
         );
         return {
           status: null,
@@ -603,13 +636,41 @@ export async function fireOnce(
             ? `Google session rejected for authuser=${authuser} — re-upload cookies (${mint.reason})`
             : `Could not reach Google to mint token — infra fault, not account (${mint.reason})`,
           injected,
-          // Only flip the template to "expired" when we're sure it's the account.
           authFailed: mint.conclusive,
         };
       }
       body = replaceAtToken(body, mint.token);
     }
     init.body = body;
+
+    // ── DEBUG: dump exact outgoing request for diffing against a live capture.
+    // Every field here is what Google will actually see.
+    const reasonNum = Number(vars.REASON) || 1;
+    console.error(
+      "[fireOnce:DEBUG] " +
+        JSON.stringify({
+          template: template.id,
+          authuser,
+          method,
+          url,
+          hasClientData: headers.has("x-client-data"),
+          hasBrowserValidation: headers.has("x-browser-validation"),
+          contentType: headers.get("content-type"),
+          reviewId: vars.REVIEW_ID,
+          reviewIdLooksProtobuf: looksLikeProtobufReviewId(vars.REVIEW_ID),
+          reasonNum,
+          reasonName: vars.REASON_NAME,
+          bodyLength: typeof init.body === "string" ? init.body.length : null,
+          bodyPreview: typeof init.body === "string" ? init.body.slice(0, 400) : null,
+        }),
+    );
+
+    if (!looksLikeProtobufReviewId(vars.REVIEW_ID)) {
+      console.error(
+        `[fireOnce] tpl=${template.id}: WARNING — REVIEW_ID "${vars.REVIEW_ID.slice(0, 40)}" does not look like a base64 protobuf. ` +
+          `Google will almost certainly return ["e",4,...] (invalid argument). Expected a value starting with "Ci".`,
+      );
+    }
   }
 
   const started = Date.now();
@@ -628,20 +689,14 @@ export async function fireOnce(
       status = res.status;
       text = await res.text().catch(() => "");
     }
-    // HTTP 200 is not proof of acceptance for the qVL8Rd batchexecute call —
-    // Google returns 200 for auth failures too, with the real error inside
-    // the wrb.fr envelope. Parse it so a rejected report is surfaced as an
-    // error instead of being logged as a silent success.
     let error: string | null = null;
     let authFailed = false;
     if (origin !== "upstream") {
-      // Relay/proxy fault — do NOT flip templates to "expired" on this.
       error = `${origin} error (HTTP ${status}) — infra fault, not account`;
     } else if (status === 200 && (url.includes("batchexecute") || text.includes("wrb.fr"))) {
       const parsed = parseBatchExecuteResult(text);
       if (!parsed.accepted && parsed.reason) {
         error = parsed.reason;
-        // wrb.fr inner code 7 = generic session/token invalid — auth failure.
         if (parsed.errorCode === 7) authFailed = true;
       }
     } else if (status >= 400) {
@@ -664,7 +719,6 @@ export async function fireOnce(
       snippet: "",
       error: (e.message || "network error") + (e.origin ? ` [${e.origin}]` : ""),
       injected,
-      // Network/relay throw is not a Google-side auth verdict.
       authFailed: false,
     };
   }

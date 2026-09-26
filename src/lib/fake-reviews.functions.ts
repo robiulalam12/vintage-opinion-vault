@@ -164,13 +164,14 @@ export const verifyTemplate = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((v: unknown) => z.object({ id: z.string().uuid() }).parse(v))
   .handler(async ({ context, data }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data: t, error } = await supabaseAdmin
+    let selQ = supabaseAdmin
       .from("fake_review_templates")
       .select("*")
-      .eq("id", data.id)
-      .maybeSingle();
+      .eq("id", data.id);
+    selQ = scopeToOwner(selQ, access.isAdmin, access.userId);
+    const { data: t, error } = await selQ.maybeSingle();
     if (error) throw new Error(error.message);
     if (!t) throw new Error("Template not found");
 

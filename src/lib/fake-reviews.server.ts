@@ -181,7 +181,6 @@ export function rewriteEndpointUrl(url: string, reviewId: string): string {
   return url.replace(/([?&]postId=)[^&]+/g, `$1${encodeURIComponent(reviewId)}`);
 }
 
-
 /**
  * Replays one captured template once. Returns HTTP status, latency, and a
  * short response snippet. Network errors are captured as `error`.
@@ -266,8 +265,7 @@ async function fetchViaRelay(
   }
   // Relay may echo "proxy" in `origin` when the proxy refused the request
   // (407, connection refused). If it doesn't, default to "upstream".
-  const origin: RelayOrigin =
-    data.origin === "proxy" || data.origin === "relay" ? data.origin : "upstream";
+  const origin: RelayOrigin = data.origin === "proxy" || data.origin === "relay" ? data.origin : "upstream";
   return { status: data.status, text: typeof data.body === "string" ? data.body : "", origin };
 }
 
@@ -396,13 +394,21 @@ export async function probeAccountSignIn(
       return { signedIn: true, reason: null, conclusive: true };
     }
     if (looksSignedOut) {
-      return { signedIn: false, reason: `redirected to sign-in for authuser=${authuser} — cookies expired`, conclusive: true };
+      return {
+        signedIn: false,
+        reason: `redirected to sign-in for authuser=${authuser} — cookies expired`,
+        conclusive: true,
+      };
     }
     if (status === 401 || status === 403) {
       return { signedIn: false, reason: `Google returned HTTP ${status} for authuser=${authuser}`, conclusive: true };
     }
     // 200 but no token and no sign-in markers: shape changed, or transient.
-    return { signedIn: false, reason: `no SNlM0e token in Maps report page (HTTP ${status ?? "?"})`, conclusive: false };
+    return {
+      signedIn: false,
+      reason: `no SNlM0e token in Maps report page (HTTP ${status ?? "?"})`,
+      conclusive: false,
+    };
   } catch (err) {
     const e = err as Error & { origin?: RelayOrigin };
     return {
@@ -413,12 +419,13 @@ export async function probeAccountSignIn(
   }
 }
 
-
 /** Swaps the `at` parameter inside a URL-encoded batchexecute body. */
 function replaceAtToken(rawBody: string, at: string): string {
   try {
     const params = new URLSearchParams(rawBody);
-    if (!params.has("at")) return rawBody;
+    // .set() upserts — do NOT gate on params.has("at"), otherwise a body
+    // that lost its `at=` (manual edit, Google format change) silently
+    // fires with a stale/missing token.
     params.set("at", at);
     return params.toString();
   } catch {
@@ -442,7 +449,14 @@ function ensureAuthuser(url: string, authuser: number): string {
 export async function fireOnce(
   template: Pick<
     TemplateRow,
-    "id" | "endpoint_url" | "method" | "headers_json" | "cookie_bundle" | "body_template" | "body_kind" | "auth_user_index"
+    | "id"
+    | "endpoint_url"
+    | "method"
+    | "headers_json"
+    | "cookie_bundle"
+    | "body_template"
+    | "body_kind"
+    | "auth_user_index"
   >,
   vars: {
     REVIEW_ID: string;
@@ -613,8 +627,7 @@ function safeEqual(a: string, b: string): boolean {
 
 export function checkExtensionKey(request: Request): boolean {
   const provided =
-    request.headers.get("x-api-key") ??
-    (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    request.headers.get("x-api-key") ?? (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   if (!provided) return false;
   const candidates = [process.env["DMCA_EXTENSION_KEY"], process.env["POB_EXTENSION_KEY"]].filter(
     (v): v is string => !!v,
@@ -625,8 +638,7 @@ export function checkExtensionKey(request: Request): boolean {
 export function checkCaptureExtensionKey(request: Request): boolean {
   if (checkExtensionKey(request)) return true;
   const provided =
-    request.headers.get("x-api-key") ??
-    (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    request.headers.get("x-api-key") ?? (request.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
   const legacy = process.env["POB_EXTENSION_KEY_LEGACY"];
   return !!provided && !!legacy && safeEqual(legacy, provided);
 }

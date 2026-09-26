@@ -59,12 +59,18 @@ async function getCookieBundle() {
   for (const storeId of stores) {
     for (const url of urls) {
       const base = storeId ? { url, storeId } : { url };
-      try { add(await chrome.cookies.getAll(base), storeId); } catch {}
-      try { add(await chrome.cookies.getAll({ ...base, partitionKey: {} }), storeId); } catch {}
+      try {
+        add(await chrome.cookies.getAll(base), storeId);
+      } catch {}
+      try {
+        add(await chrome.cookies.getAll({ ...base, partitionKey: {} }), storeId);
+      } catch {}
     }
     for (const domain of domains) {
       const base = storeId ? { domain, storeId } : { domain };
-      try { add(await chrome.cookies.getAll(base), storeId); } catch {}
+      try {
+        add(await chrome.cookies.getAll(base), storeId);
+      } catch {}
     }
   }
 
@@ -76,9 +82,7 @@ async function getCookieBundle() {
 // ---------- per-account probes ----------
 
 function stripAt(html) {
-  const m =
-    /"SNlM0e"\s*:\s*"([^"]+)"/.exec(html) ||
-    /"FdrFJe"\s*:\s*"([^"]+)"/.exec(html);
+  const m = /"SNlM0e"\s*:\s*"([^"]+)"/.exec(html) || /"FdrFJe"\s*:\s*"([^"]+)"/.exec(html);
   return m ? m[1] : null;
 }
 
@@ -205,7 +209,9 @@ async function uploadSession({ cookieBundle, atToken, email, authuser }) {
       });
       const text = await res.text();
       let data = {};
-      try { data = text ? JSON.parse(text) : {}; } catch {}
+      try {
+        data = text ? JSON.parse(text) : {};
+      } catch {}
       if (res.ok) return data;
       if (res.status === 401) {
         throw new Error(data.error || "Extension access expired. Download the latest capture extension.");

@@ -581,6 +581,8 @@ export async function fireOnce(
       }
       body = replaceAtToken(body, mint.token);
     }
+    init.body = body;
+  }
 
   const started = Date.now();
   try {

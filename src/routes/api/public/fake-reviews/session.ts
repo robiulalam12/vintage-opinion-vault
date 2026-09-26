@@ -1,13 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { z } from "zod";
-import { randomUUID } from "node:crypto"; // or globalThis.crypto.randomUUID() on Workers
 
 import { checkCaptureExtensionKey, json, preflight, probeAccountSignIn } from "@/lib/fake-reviews.server";
-
-import { createFileRoute } from "@tanstack/react-router";
-import { z } from "zod";
-
-import { checkCaptureExtensionKey, json, preflight } from "@/lib/fake-reviews.server";
 
 const CAPTURE_EXTENSION_VERSION = "3.2.0";
 
@@ -69,6 +63,19 @@ const schema = z.object({
   notes: z.string().max(500).optional().nullable(),
 });
 
+function cookieBundleHasAuth(bundle: string): { ok: true } | { ok: false; reason: string } {
+  const names = new Set(
+    bundle
+      .split(";")
+      .map((part) => part.trim().split("=", 1)[0]?.toUpperCase())
+      .filter((name): name is string => Boolean(name)),
+  );
+  if (!["SAPISID", "__SECURE-3PAPISID"].some((name) => names.has(name))) {
+    return { ok: false, reason: "Cookie bundle is missing a Google authentication cookie." };
+  }
+  return { ok: true };
+}
+
 export const Route = createFileRoute("/api/public/fake-reviews/session")({
   server: {
     handlers: {
@@ -85,7 +92,7 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
           return json({ error: "Invalid payload", detail: (err as Error).message }, 400);
         }
 
-         const authuser = parsed.auth_user_index ?? 0;
+        const authuser = parsed.auth_user_index ?? 0;
 
         // Reject obviously-wrong bundles immediately (cheap).
         const cookieCheck = cookieBundleHasAuth(parsed.cookie_bundle);
@@ -96,7 +103,7 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
         // Prove the cookies actually authenticate for THIS authuser slot
         // before we persist. Without this, a dead bundle is stored as
         // status="fresh" and only fails days later at fire time.
-        const probeId = randomUUID();
+        const probeId = crypto.randomUUID();
         const probe = await probeAccountSignIn({
           id: probeId,
           cookie_bundle: parsed.cookie_bundle,
@@ -151,3 +158,7 @@ export const Route = createFileRoute("/api/public/fake-reviews/session")({
           status: initialStatus,
           probe: { signedIn: probe.signedIn, conclusive: probe.conclusive, reason: probe.reason },
         });
+      },
+    },
+  },
+});

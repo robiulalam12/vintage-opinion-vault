@@ -86,14 +86,16 @@ function scopeToOwner<T>(q: T, isAdmin: boolean, userId: string, column = "creat
 export const listTemplates = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
-    await assertAdmin(context);
+    const access = await assertSection(context);
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { data, error } = await supabaseAdmin
+    let q = supabaseAdmin
       .from("fake_review_templates")
       .select(
         "id,label,google_email,auth_user_index,status,captured_at,last_verified_at,last_fired_at,last_error,shots_fired,notes",
       )
       .order("captured_at", { ascending: false });
+    q = scopeToOwner(q, access.isAdmin, access.userId);
+    const { data, error } = await q;
     if (error) throw new Error(error.message);
     return (data ?? []).map((r: any): FakeTemplateSummary => {
       const m = /^\[tag:([^\]]+)\]\s*/.exec(r.notes ?? "");
